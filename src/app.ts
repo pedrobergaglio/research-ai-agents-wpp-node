@@ -1,7 +1,7 @@
 import { join } from 'path'
 import { createBot, createProvider, createFlow, addKeyword, utils } from '@builderbot/bot'
 import { MysqlAdapter as Database } from '@builderbot/database-mysql'
-import { MetaProvider as Provider } from '@builderbot/provider-meta'
+import { BaileysProvider as Provider } from '@builderbot/provider-baileys'
 
 const PORT = process.env.PORT ?? 3008
 
@@ -36,6 +36,21 @@ const welcomeFlow = addKeyword<Provider, Database>(['hi', 'hello', 'hola'])
         [discordFlow]
     )
 
+const callApiFlow = addKeyword<Provider, Database>('api')
+    .addAnswer('Calling API...', { delay: 500 })
+    .addAction(async (_, { flowDynamic }) => {
+        // Call the API and get the response
+        const response = await fetch('https://api.example.com/data')
+        const data = await response.json()
+
+        // Return the response to the user
+        await flowDynamic(`API response: ${JSON.stringify(data)}`)
+    })
+
+const AiAgentFlow = addKeyword<Provider, Database>(['ai', 'agent']).addAction(async (_, { flowDynamic }) => {
+    await flowDynamic(`${state.get('name')}, thanks for your information!: Your age: ${state.get('age')}`)
+})
+
 const registerFlow = addKeyword<Provider, Database>(utils.setEvent('REGISTER_FLOW'))
     .addAnswer(`What is your name?`, { capture: true }, async (ctx, { state }) => {
         await state.update({ name: ctx.body })
@@ -60,17 +75,21 @@ const fullSamplesFlow = addKeyword<Provider, Database>(['samples', utils.setEven
 
 const main = async () => {
     const adapterFlow = createFlow([welcomeFlow, registerFlow, fullSamplesFlow])
-    const adapterProvider = createProvider(Provider, {
-        jwtToken: process.env.JWT_TOKEN,
-        numberId: process.env.NUMBER_ID,
-        verifyToken: process.env.VERIFY_TOKEN,
-        version: 'v20.0'
-    })
+
+    /*
+DATABASE_USER="appsheet"
+DATABASE_PASS="Myeest822"
+DATABASE_IP="149.50.134.100"
+DATABASE_NAME="energia_global"
+ */
+
+    const adapterProvider = createProvider(Provider)
     const adapterDB = new Database({
-        host: process.env.MYSQL_DB_HOST,
-        user: process.env.MYSQL_DB_USER,
-        database: process.env.MYSQL_DB_NAME,
-        password: process.env.MYSQL_DB_PASSWORD,
+        host: '149.50.134.100', //process.env.MYSQL_DB_HOST,
+        user: 'appsheet', //process.env.MYSQL_DB_USER,
+        database: 'test', //process.env.MYSQL_DB_NAME,
+        password: 'Myeest822', //process.env.MYSQL_DB_PASSWORD,
+        port: 3306, // Replace with the correct port number
     })
 
     const { handleCtx, httpServer } = await createBot({

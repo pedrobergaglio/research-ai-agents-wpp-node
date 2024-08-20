@@ -5,15 +5,15 @@
   "main": "dist/app.js",
   "type": "module",
   "scripts": {
-    "start": "node ./dist/app.js --env-file=.env",
+    "start": "node ./dist/app.js",
     "lint": "eslint . --no-ignore",
-    "dev": "npm run lint && nodemon --env-file=.env ./src/app.ts",
-    "build": "npx rollup -c --env-file=.env"
+    "dev": "npm run lint && nodemon ./src/app.ts",
+    "build": "npx rollup -c"
   },
   "keywords": [],
   "dependencies": {
     "@builderbot/bot": "1.2.1",
-    "@builderbot/provider-meta": "1.2.1",
+    "@builderbot/provider-baileys": "1.2.1",
     "@builderbot/database-mysql": "1.2.1"
   },
   "devDependencies": {
