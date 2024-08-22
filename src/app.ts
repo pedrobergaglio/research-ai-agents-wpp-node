@@ -1,79 +1,85 @@
-import { join } from 'path'
-import { createBot, createProvider, createFlow, addKeyword, utils } from '@builderbot/bot'
+import { createBot, createProvider, createFlow, addKeyword, utils, EVENTS } from '@builderbot/bot'
 import { MysqlAdapter as Database } from '@builderbot/database-mysql'
 import { MetaProvider as Provider } from '@builderbot/provider-meta'
+import mysql from 'mysql2/promise';
+import * as fs from 'fs';
+import csv from 'csv-parser';
+import { isOnlyEmojis, insert_feedback } from 'flows/feedback';
+import { check_user_auth } from 'flows/authentication.flow';
 
 const PORT = process.env.PORT ?? 3008
 
-const discordFlow = addKeyword<Provider, Database>('doc').addAnswer(
-    ['You can see the documentation here', '📄 https://builderbot.app/docs \n', 'Do you want to continue? *yes*'].join(
-        '\n'
-    ),
-    { capture: true },
-    async (ctx, { gotoFlow, flowDynamic }) => {
-        if (ctx.body.toLocaleLowerCase().includes('yes')) {
-            return gotoFlow(registerFlow)
+const chatHistory: string[] = [];
+
+const registerFlow = addKeyword<Provider, Database>(['test']).addAction(
+    async (ctx, {flowDynamic}) => {
+        // Add the incoming message to the chat history
+        console.log('User:', ctx.body);
+        chatHistory.push(`user: ${ctx.body}`);
+
+        const request = {
+            method: "POST",
+            body: JSON.stringify(chatHistory),
+            headers: {
+                "Content-Type": "application/json",
+            },
+        };
+        
+        console.log('Request:', request);
+
+        // Call the AI chatbot API with the chat history
+        const aiResponse = await fetch("http://127.0.0.1:5000/chat", request);
+
+        const aiMessage = await aiResponse.json();
+
+        // Add the AI response to the chat history
+        chatHistory.push(`ai: ${aiMessage}`);
+
+        // Send the AI response to the user
+        console.log('AI message:', aiMessage);
+        await flowDynamic(aiMessage);
+
+        /* // Check the registration status
+        const checkDB = await fetch("http://my.app.example/checkDB", {
+            method: "POST",
+            body: JSON.stringify({ phoneNumber: ctx.from }),
+            headers: {
+                "Content-Type": "application/json",
+            },
+        });
+
+        const status = await checkDB.json();
+        if (status === undefined) {
+            await state.update({ Registration: false });
+            return gotoFlow(unregisteredUsersFlow);
         }
-        await flowDynamic('Thanks!')
-        return
+        if (status === true) {
+            return gotoFlow(registeredUsersFlow);
+        } */
     }
-)
-
-const welcomeFlow = addKeyword<Provider, Database>(['hi', 'hello', 'hola'])
-    .addAnswer(`🙌 Hello welcome to this *Chatbot*`)
-    .addAnswer(
-        [
-            'I share with you the following links of interest about the project',
-            '👉 *doc* to view the documentation',
-        ].join('\n'),
-        { delay: 800, capture: true },
-        async (ctx, { fallBack }) => {
-            if (!ctx.body.toLocaleLowerCase().includes('doc')) {
-                return fallBack('You should type *doc*')
-            }
-            return
-        },
-        [discordFlow]
-    )
-
-const registerFlow = addKeyword<Provider, Database>(utils.setEvent('REGISTER_FLOW'))
-    .addAnswer(`What is your name?`, { capture: true }, async (ctx, { state }) => {
-        await state.update({ name: ctx.body })
-    })
-    .addAnswer('What is your age?', { capture: true }, async (ctx, { state }) => {
-        await state.update({ age: ctx.body })
-    })
-    .addAction(async (_, { flowDynamic, state }) => {
-        await flowDynamic(`${state.get('name')}, thanks for your information!: Your age: ${state.get('age')}`)
-    })
-
-const fullSamplesFlow = addKeyword<Provider, Database>(['samples', utils.setEvent('SAMPLES')])
-    .addAnswer(`💪 I'll send you a lot files...`)
-    .addAnswer(`Send image from Local`, { media: join(process.cwd(), 'assets', 'sample.png') })
-    .addAnswer(`Send video from URL`, {
-        media: 'https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExYTJ0ZGdjd2syeXAwMjQ4aWdkcW04OWlqcXI3Ynh1ODkwZ25zZWZ1dCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/LCohAb657pSdHv0Q5h/giphy.mp4',
-    })
-    .addAnswer(`Send audio from URL`, { media: 'https://cdn.freesound.org/previews/728/728142_11861866-lq.mp3' })
-    .addAnswer(`Send file from URL`, {
-        media: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    })
+);
+    
+    
+const credentials = {
+    host: process.env.MYSQL_DB_HOST,
+    user: process.env.MYSQL_DB_USER,
+    database: process.env.MYSQL_DB_NAME,
+    password: process.env.MYSQL_DB_PASSWORD,
+    port: 3306,
+}
 
 const main = async () => {
-    const adapterFlow = createFlow([welcomeFlow, registerFlow, fullSamplesFlow])
+    const adapterFlow = createFlow([registerFlow])
+    
     const adapterProvider = createProvider(Provider, {
         jwtToken: process.env.JWT_TOKEN,
         numberId: process.env.NUMBER_ID,
         verifyToken: process.env.VERIFY_TOKEN,
         version: 'v20.0'
     })
-    const adapterDB = new Database({
-        host: process.env.MYSQL_DB_HOST,
-        user: process.env.MYSQL_DB_USER,
-        database: process.env.MYSQL_DB_NAME,
-        password: process.env.MYSQL_DB_PASSWORD,
-    })
+    const adapterDB = new Database(credentials)
 
-    const { handleCtx, httpServer } = await createBot({
+    const bot = await createBot({
         flow: adapterFlow,
         provider: adapterProvider,
         database: adapterDB,
@@ -81,7 +87,7 @@ const main = async () => {
 
     adapterProvider.server.post(
         '/v1/messages',
-        handleCtx(async (bot, req, res) => {
+        bot.handleCtx(async (bot, req, res) => {
             const { number, message, urlMedia } = req.body
             await bot.sendMessage(number, message, { media: urlMedia ?? null })
             return res.end('sended')
@@ -90,7 +96,7 @@ const main = async () => {
 
     adapterProvider.server.post(
         '/v1/register',
-        handleCtx(async (bot, req, res) => {
+        bot.handleCtx(async (bot, req, res) => {
             const { number, name } = req.body
             await bot.dispatch('REGISTER_FLOW', { from: number, name })
             return res.end('trigger')
@@ -99,7 +105,7 @@ const main = async () => {
 
     adapterProvider.server.post(
         '/v1/samples',
-        handleCtx(async (bot, req, res) => {
+        bot.handleCtx(async (bot, req, res) => {
             const { number, name } = req.body
             await bot.dispatch('SAMPLES', { from: number, name })
             return res.end('trigger')
@@ -108,7 +114,7 @@ const main = async () => {
 
     adapterProvider.server.post(
         '/v1/blacklist',
-        handleCtx(async (bot, req, res) => {
+        bot.handleCtx(async (bot, req, res) => {
             const { number, intent } = req.body
             if (intent === 'remove') bot.blacklist.remove(number)
             if (intent === 'add') bot.blacklist.add(number)
@@ -118,7 +124,23 @@ const main = async () => {
         })
     )
 
-    httpServer(+PORT)
+    bot.httpServer(+PORT)
+
+    let result: any = null;
+
+    adapterProvider.on('message', (ctx) => {
+        console.log('Complete Received Message Context:', JSON.stringify(ctx, null, 2));
+        result = isOnlyEmojis(ctx.body)
+        if (result) {insert_feedback(ctx, result)}
+
+        //console.log('Checking user authentication...', check_user_auth(ctx, result));
+
+    });
+    
+
+    bot.on('send_message', (ctx) => {
+        console.log('Complete Sent Message Context:', JSON.stringify(ctx, null, 2))
+    })
 }
 
 main()

@@ -20,9 +20,10 @@
     }
   },
   "include": [
+    "src/**/*",
     "**/*.js",
     "**/*.ts"
-  ],
+, "flow"  ],
   "exclude": [
     "node_modules",
     "dist",

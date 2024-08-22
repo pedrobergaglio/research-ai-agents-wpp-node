@@ -6,24 +6,29 @@
   "type": "module",
   "scripts": {
     "start": "node ./dist/app.js --env-file=.env",
-    "lint": "eslint . --no-ignore",
+    "lint": "eslint . ",
     "dev": "npm run lint && nodemon --env-file=.env ./src/app.ts",
     "build": "npx rollup -c --env-file=.env"
   },
   "keywords": [],
   "dependencies": {
     "@builderbot/bot": "1.2.1",
+    "@builderbot/database-mysql": "1.2.1",
     "@builderbot/provider-meta": "1.2.1",
-    "@builderbot/database-mysql": "1.2.1"
+    "csv-parser": "^3.0.0",
+    "emojione": "^4.5.0",
+    "mysql2": "^3.11.0",
+    "pg": "^8.12.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
+    "@types/pg": "^8.11.6",
     "@typescript-eslint/eslint-plugin": "^7.2.0",
     "@typescript-eslint/parser": "^7.4.0",
     "eslint": "^8.52.0",
     "eslint-plugin-builderbot": "latest",
-    "rollup": "^4.10.0",
     "nodemon": "^3.1.0",
+    "rollup": "^4.10.0",
     "rollup-plugin-typescript2": "^0.36.0",
     "tsx": "^4.7.1",
     "typescript": "^5.4.3"
