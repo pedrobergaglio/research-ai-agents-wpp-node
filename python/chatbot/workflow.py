@@ -442,7 +442,7 @@ class ConciergeAgent():
         self.current_event = ev
 
         response = str(self.agent.chat(ev.request))
-        print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
+        print(Fore.MAGENTA + 'workflow ' + str(response) + Style.RESET_ALL)
 
         # if they're sending us elsewhere we're done here
         if self.context.data["redirecting"]:
@@ -460,7 +460,6 @@ async def main():
     result = await c.run()
     print(result)
 
-"""if __name__ == "__main__":
+if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
-"""

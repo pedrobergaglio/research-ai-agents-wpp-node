@@ -6,6 +6,9 @@ import * as fs from 'fs';
 import csv from 'csv-parser';
 import { isOnlyEmojis, insert_feedback } from 'flows/feedback';
 import { check_user_auth } from 'flows/authentication.flow';
+import * as dotenv from 'dotenv';
+dotenv.config();
+
 
 const PORT = process.env.PORT ?? 3008
 
@@ -70,13 +73,15 @@ const credentials = {
 
 const main = async () => {
     const adapterFlow = createFlow([registerFlow])
-    
-    const adapterProvider = createProvider(Provider, {
-        jwtToken: process.env.JWT_TOKEN,
+    const providerCredentials = {
+        jwtToken: process.env.JWT_TOKEN2,
         numberId: process.env.NUMBER_ID,
         verifyToken: process.env.VERIFY_TOKEN,
         version: 'v20.0'
-    })
+    }
+
+    const adapterProvider = createProvider(Provider, providerCredentials);  
+
     const adapterDB = new Database(credentials)
 
     const bot = await createBot({
@@ -84,6 +89,8 @@ const main = async () => {
         provider: adapterProvider,
         database: adapterDB,
     })
+
+    console.log('Bot is running...', bot)
 
     adapterProvider.server.post(
         '/v1/messages',
@@ -128,12 +135,31 @@ const main = async () => {
 
     let result: any = null;
 
+    adapterProvider.server.post('/v1/messages', bot.handleCtx(async (bot, req, res) => {
+        console.log('Received POST request on /v1/messages');
+        const { number, message, urlMedia } = req.body;
+        await bot.sendMessage(number, message, { media: urlMedia ?? null });
+        return res.end('sended');
+    }));
+    
+
     adapterProvider.on('message', (ctx) => {
         console.log('Complete Received Message Context:', JSON.stringify(ctx, null, 2));
         result = isOnlyEmojis(ctx.body)
         if (result) {insert_feedback(ctx, result)}
 
         //console.log('Checking user authentication...', check_user_auth(ctx, result));
+
+        try {
+            console.log('Message event triggered');
+            console.log('Complete Received Message Context:', JSON.stringify(ctx, null, 2));
+            const result = isOnlyEmojis(ctx.body);
+            if (result) {
+                insert_feedback(ctx, result);
+            }
+        } catch (error) {
+            console.error('Error in message handler:', error);
+        }
 
     });
     
