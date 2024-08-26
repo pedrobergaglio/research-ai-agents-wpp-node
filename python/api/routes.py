@@ -25,7 +25,7 @@ def configure_routes(app):
         #response = data['event_type']#process_chat_message(data)
         response = await handle_user_message(data['from'], data['message'])
         print(Fore.MAGENTA + 'routes ' + str(response) + str(type(response)) + Style.RESET_ALL)
-        return jsonify(response)
+        return jsonify({'response':str(response)})
     
     @app.route('/', methods=['GET'])
     def home():

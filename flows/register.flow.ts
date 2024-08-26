@@ -3,7 +3,7 @@ import { MysqlAdapter as Database } from '@builderbot/database-mysql'
 import { MetaProvider as Provider } from '@builderbot/provider-meta'
 import { join } from 'path'
 
-export const registerFlow = addKeyword<Provider, Database>(utils.setEvent('REGISTER_FLOW'))
+export const register = addKeyword<Provider, Database>(utils.setEvent('REGISTER_FLOW'))
     .addAnswer(`What is your name?`, { capture: true }, async (ctx, { state }) => {
         await state.update({ name: ctx.body })
     })

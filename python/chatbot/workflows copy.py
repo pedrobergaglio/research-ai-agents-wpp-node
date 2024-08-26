@@ -1,6 +1,8 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+import requests
+
 from llama_index.core.workflow import (
     step, 
     Context, 
@@ -18,7 +20,7 @@ from typing import Optional, List, Callable
 from llama_index.utils.workflow import draw_all_possible_flows
 from colorama import Fore, Back, Style
 
-class InitializeEventGGG(Event):
+class InitializeEvent(Event):
     pass
 
 class ConciergeEvent(Event):
@@ -44,7 +46,7 @@ class TransferMoneyEvent(Event):
 class ConciergeWorkflow(Workflow):
 
     @step(pass_context=True)
-    async def initialize(self, ctx: Context, ev: InitializeEventGGG) -> ConciergeEvent:
+    async def initialize(self, ctx: Context, ev: InitializeEvent) -> ConciergeEvent:
         ctx.data["user"] = {
             "username": None,
             "session_token": None,
@@ -59,13 +61,13 @@ class ConciergeWorkflow(Workflow):
         #ctx.data["llm"] = Anthropic(model="claude-3-5-sonnet-20240620",temperature=0.4)
         #ctx.data["llm"] = Anthropic(model="claude-3-opus-20240229",temperature=0.4)
 
-        return ConciergeEvent()
+        return ConciergeEvent(request=None, just_completed=None, need_help=None)
   
     @step(pass_context=True)
-    async def concierge(self, ctx: Context, ev: ConciergeEvent | StartEvent) -> InitializeEventGGG | StopEvent | OrchestratorEvent:
+    async def concierge(self, ctx: Context, ev: ConciergeEvent | StartEvent) -> InitializeEvent | StopEvent | OrchestratorEvent:
         # initialize user if not already done
         if ("user" not in ctx.data):
-            return InitializeEventGGG()
+            return InitializeEvent()
         
         # initialize concierge if not already done
         if ("concierge" not in ctx.data):
@@ -104,8 +106,20 @@ class ConciergeWorkflow(Workflow):
             response = concierge.chat("Hello!")
 
         print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
-        user_msg_str = input("> ").strip()
-        return OrchestratorEvent(request=user_msg_str)
+
+        url = "http://127.0.0.1:3008/v1/messages"
+        data = {
+            "number": "5491131500591",
+            "message": str(response)
+        }
+
+        response = requests.post(url, json=data, headers={"Content-Type": "application/json"})
+        print('Request sent to server')
+        print(Fore.MAGENTA + str(response.status_code) + Style.RESET_ALL)
+        #print(Fore.MAGENTA + str(response.json()) + Style.RESET_ALL)
+
+        #user_msg_str = input("> ").strip()
+        return OrchestratorEvent(request='thank you for the help, we are done.')#(request=user_msg_str)
     
     @step(pass_context=True)
     async def orchestrator(self, ctx: Context, ev: OrchestratorEvent) -> ConciergeEvent | StockLookupEvent | AuthenticateEvent | AccountBalanceEvent | TransferMoneyEvent | StopEvent:
@@ -312,8 +326,8 @@ class ConciergeWorkflow(Workflow):
                 trigger_event=AccountBalanceEvent
             )
 
-        # TODO: this could programmatically check for authentication and emit an event
-        # but then the agent wouldn't say anything helpful about what's going on.
+            # TODO: this could programmatically check for authentication and emit an event
+            # but then the agent wouldn't say anything helpful about what's going on.
 
         return ctx.data["account_balance_agent"].handle_event(ev)
     
@@ -438,11 +452,22 @@ class ConciergeAgent():
         )
         self.agent = agent_worker.as_agent()        
 
-    def handle_event(self, ev: Event):
+    def handle_event(self, ev: Event, user_msg_str: str = None):
         self.current_event = ev
 
         response = str(self.agent.chat(ev.request))
-        print(Fore.MAGENTA + 'workflow ' + str(response) + Style.RESET_ALL)
+        print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
+
+        url = "http://127.0.0.1:3008/v1/messages"
+        data = {
+            "number": "5491131500591",
+            "message": str(response)
+        }
+
+        response = requests.post(url, json=data, headers={"Content-Type": "application/json"})
+        print('Request sent to server')
+        print(Fore.MAGENTA + str(response.status_code) + Style.RESET_ALL)
+        #print(Fore.MAGENTA + str(response.json()) + Style.RESET_ALL)
 
         # if they're sending us elsewhere we're done here
         if self.context.data["redirecting"]:
@@ -450,15 +475,16 @@ class ConciergeAgent():
             return None
 
         # otherwise, get some user input and then loop
-        user_msg_str = input("> ").strip()
-        return self.trigger_event(request=user_msg_str)
+        #user_msg_str = input("> ").strip()
+        return self.trigger_event(request='thank you for the help, we are done.')#(request=user_msg_str)
 
-draw_all_possible_flows(ConciergeWorkflow,filename="concierge_flows1.html")
+#draw_all_possible_flows(ConciergeWorkflow,filename="concierge_flows.html")
 
 async def main():
     c = ConciergeWorkflow(timeout=1200, verbose=True)
     result = await c.run()
-    print(result)
+    #print(result)
+    return 'finished'
 
 if __name__ == "__main__":
     import asyncio

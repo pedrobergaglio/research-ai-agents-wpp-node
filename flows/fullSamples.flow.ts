@@ -3,7 +3,7 @@ import { MysqlAdapter as Database } from '@builderbot/database-mysql'
 import { MetaProvider as Provider } from '@builderbot/provider-meta'
 import { join } from 'path'
 
-export const fullSamplesFlow = addKeyword<Provider, Database>(['samples', utils.setEvent('SAMPLES')])
+export const fullSamples = addKeyword<Provider, Database>(['samples', utils.setEvent('SAMPLES')])
     .addAnswer(`💪 I'll send you a lot files...`)
     .addAnswer(`Send image from Local`, { media: join(process.cwd(), 'assets', 'sample.png') })
     .addAnswer(`Send video from URL`, {

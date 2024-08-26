@@ -3,8 +3,12 @@ from colorama import Fore, Back, Style
 from flask import Flask
 from api.routes import configure_routes
 
+from chatbot.workflows import *
+
 app = Flask(__name__)
 configure_routes(app)
+
+StartEvent
 
 if __name__ == '__main__':
     app.run(port=5000, debug=True)

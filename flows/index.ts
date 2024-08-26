@@ -1,7 +1,7 @@
 import { createFlow } from '@builderbot/bot';
-import { fullSamplesFlow } from "./fullSamplesFlow.flow";
-import { registerFlow } from "./registerFlow.flow";
-import { authentication } from "./authentication.flow";
+import { fullSamples } from "./fullSamples.flow";
+import { register } from "./register.flow";
+import {test} from './test.flow';
 
-export const flow =  createFlow([authentication, registerFlow, fullSamplesFlow])
+export const flow = createFlow([register, fullSamples, test]);
 
