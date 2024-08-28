@@ -1,25 +1,34 @@
 # api/services.py
 
-from colorama import Fore, Style
 from chatbot.workflows import *
+import json
+from llama_index.core.workflow import Workflow
+from llama_index.core.workflow.session import WorkflowSession
+
+# Initialize the workflow
+workflow = ConciergeWorkflow(timeout=1200, verbose=True)
 
 # In-memory store for user workflow states
 user_workflow_states = {}
 
-next_call = None
-ctx = None #i don't now how this should start
+next_call = OrchestratorEvent
 
-workflow = ConciergeWorkflow(timeout=1200, verbose=True)
+events = [AuthenticateEvent, StopEvent, OrchestratorEvent]
 
 async def handle_user_message(user_id, message):
 
-    ctx = await workflow.continue_func(ctx, message) #this function is not implemented, but it receives the new message and the context where the process was left
+    global next_call
+    
+    await workflow.run_step(message=message, event=next_call)   
 
-    return 'user input needed' # this goes to the message manager api when the system needs user input
+    # Iterate until done
+    while not workflow.is_done():
+        result = await workflow.run_step()
 
-    """ if next_call is None:    
-        result = await workflow.run()
-    elif next_call == 'orchestator':
-        result = await workflow.orchestator(user_id, message
+    print(Fore.GREEN + 'Result: ' +str(result) + Style.RESET_ALL)
 
-    if result == 'finished': next_call = None """
+    next_call = result['next_call']
+
+    return 'success'
+
+

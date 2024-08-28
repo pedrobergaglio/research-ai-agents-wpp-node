@@ -1,3 +1,9 @@
+to = '5491131500591'
+context = None
+
+#from api.utils import *     
+
+from typing import Union
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -21,145 +27,122 @@ from llama_index.utils.workflow import draw_all_possible_flows
 from colorama import Fore, Back, Style
 
 class InitializeEvent(Event):
-    pass
+    None
 
 class ConciergeEvent(Event):
-    request: Optional[str]
-    just_completed: Optional[str]
-    need_help: Optional[bool]
+    None
 
 class OrchestratorEvent(Event):
-    request: str
+    None#request: str
 
 class StockLookupEvent(Event):
-    request: str
+    None
 
 class AuthenticateEvent(Event):
-    request: str
+    None
 
 class AccountBalanceEvent(Event):
-    request: str
+    None
 
 class TransferMoneyEvent(Event):
-    request: str
+    None
+
+class HeaderEvent(Event):
+    None
 
 class ConciergeWorkflow(Workflow):
 
-    @step(pass_context=True)
-    async def initialize(self, ctx: Context, ev: InitializeEvent) -> ConciergeEvent:
-        ctx.data["user"] = {
+    @step()
+    async def header(self, ctx: Context, ev: StartEvent | HeaderEvent) -> Union[OrchestratorEvent, AuthenticateEvent, StopEvent, InitializeEvent, TransferMoneyEvent, AccountBalanceEvent, StockLookupEvent]:
+
+        global context
+
+        # initialize user if StartEvent
+        if context is None:
+            context = ctx
+            context.data['header_event'] = ev.event
+            context.data['request'] = ev.get('message')
+            params = ev.get('params')
+            if params is not None:
+                for key, value in params.items():
+                    context.data[key] = value
+            return InitializeEvent()
+        elif type(ev) == StartEvent:
+            context.data['header_event'] = ev.event
+            context.data['request'] = ev.get('message')
+            params = ev.get('params')
+            if params is not None:
+                for key, value in params.items():
+                    context.data[key] = value
+
+        # Return called event
+        return context.data['header_event']()
+
+    @step()
+    async def initialize(self, ctx: Context, ev: InitializeEvent) -> HeaderEvent:#ConciergeEvent:
+
+        global context
+
+        context.data["user"] = {
             "username": None,
             "session_token": None,
             "account_id": None,
             "account_balance": None,
         }
-        ctx.data["success"] = None
-        ctx.data["redirecting"] = None
-        ctx.data["overall_request"] = None
+        context.data["success"] = None
+        context.data["redirecting"] = None
+        context.data["overall_request"] = None
+        context.data["llm"] = OpenAI(model="gpt-4o-mini",temperature=0.4)
 
-        ctx.data["llm"] = OpenAI(model="gpt-4o-mini",temperature=0.4)
-        #ctx.data["llm"] = Anthropic(model="claude-3-5-sonnet-20240620",temperature=0.4)
-        #ctx.data["llm"] = Anthropic(model="claude-3-opus-20240229",temperature=0.4)
+        if 'llm' not in context.data:
+            print(Fore.MAGENTA + 'Added llm' + Style.RESET_ALL)
+            context.data['llm'] = OpenAI(model="gpt-4o-mini", temperature=0.4)
 
-        return ConciergeEvent(request=None, just_completed=None, need_help=None)
-  
-    @step(pass_context=True)
-    async def concierge(self, ctx: Context, ev: ConciergeEvent | StartEvent) -> InitializeEvent | StopEvent | OrchestratorEvent:
-        # initialize user if not already done
-        if ("user" not in ctx.data):
-            return InitializeEvent()
+        return HeaderEvent()
+ 
+    @step()
+    async def orchestrator(self, ctx: Context, ev: OrchestratorEvent) -> Union[OrchestratorEvent, AuthenticateEvent, StopEvent, InitializeEvent, TransferMoneyEvent, AccountBalanceEvent, StockLookupEvent]:
+
+        global context
+        request = context.data.get('request')
         
-        # initialize concierge if not already done
-        if ("concierge" not in ctx.data):
-            system_prompt = (f"""
-                You are a helpful assistant that is helping a user navigate a financial system.
-                Your job is to ask the user questions to figure out what they want to do, and give them the available things they can do.
-                That includes
-                * looking up a stock price            
-                * authenticating the user
-                * checking an account balance
-                * transferring money between accounts
-                You should start by listing the things you can help them do.            
-            """)
-
-            agent_worker = FunctionCallingAgentWorker.from_tools(
-                tools=[],
-                llm=ctx.data["llm"],
-                allow_parallel_tool_calls=False,
-                system_prompt=system_prompt
-            )
-            ctx.data["concierge"] = agent_worker.as_agent()        
-
-        concierge = ctx.data["concierge"]
-        if ctx.data["overall_request"] is not None:
-            print("There's an overall request in progress, it's ", ctx.data["overall_request"])
-            last_request = ctx.data["overall_request"]
-            ctx.data["overall_request"] = None
-            return OrchestratorEvent(request=last_request)
-        elif (ev.just_completed is not None):
-            response = concierge.chat(f"FYI, the user has just completed the task: {ev.just_completed}")
-        elif (ev.need_help):
-            print("The previous process needs help with ", ev.request)
-            return OrchestratorEvent(request=ev.request)
-        else:
-            # first time experience
-            response = concierge.chat("Hello!")
-
-        print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
-
-        url = "http://127.0.0.1:3008/v1/messages"
-        data = {
-            "number": "5491131500591",
-            "message": str(response)
-        }
-
-        response = requests.post(url, json=data, headers={"Content-Type": "application/json"})
-        print('Request sent to server')
-        print(Fore.MAGENTA + str(response.status_code) + Style.RESET_ALL)
-        #print(Fore.MAGENTA + str(response.json()) + Style.RESET_ALL)
-
-        #user_msg_str = input("> ").strip()
-        return OrchestratorEvent(request='i would like to authenticate my account.')#(request=user_msg_str)
-    
-    @step(pass_context=True)
-    async def orchestrator(self, ctx: Context, ev: OrchestratorEvent) -> ConciergeEvent | StockLookupEvent | AuthenticateEvent | AccountBalanceEvent | TransferMoneyEvent | StopEvent:
-
-        print(f"Orchestrator received request: {ev.request}")
-
-        def emit_stock_lookup() -> bool:
-            """Call this if the user wants to look up a stock price."""      
-            print("__emitted: stock lookup")      
-            self.send_event(StockLookupEvent(request=ev.request))
-            return True
+        print(f"Orchestrator received request: {request}")
 
         def emit_authenticate() -> bool:
             """Call this if the user wants to authenticate"""
             print("__emitted: authenticate")
-            self.send_event(AuthenticateEvent(request=ev.request))
+            context.session.send_event(AuthenticateEvent(request=request))
             return True
-
+        
+        def emit_stock_lookup() -> bool:
+            """Call this if the user wants to look up a stock price."""      
+            print("__emitted: stock lookup")      
+            context.session.send_event(StockLookupEvent(request=request))
+            return True
+        
+        
         def emit_account_balance() -> bool:
             """Call this if the user wants to check an account balance."""
             print("__emitted: account balance")
-            self.send_event(AccountBalanceEvent(request=ev.request))
+            context.session.send_event(AccountBalanceEvent(request=request))
             return True
 
         def emit_transfer_money() -> bool:
             """Call this if the user wants to transfer money."""
             print("__emitted: transfer money")
-            self.send_event(TransferMoneyEvent(request=ev.request))
+            context.session.send_event(TransferMoneyEvent(request=request))
             return True
 
         def emit_concierge() -> bool:
             """Call this if the user wants to do something else or you can't figure out what they want to do."""
             print("__emitted: concierge")
-            self.send_event(ConciergeEvent(request=ev.request))
+            context.session.send_event(ConciergeEvent(request=request))
             return True
-
+        
         def emit_stop() -> bool:
             """Call this if the user wants to stop or exit the system."""
             print("__emitted: stop")
-            self.send_event(StopEvent())
+            context.session.send_event(StopEvent())
             return True
 
         tools = [
@@ -172,36 +155,289 @@ class ConciergeWorkflow(Workflow):
         ]
         
         system_prompt = (f"""
-            You are on orchestration agent.
+            You are an orchestration agent.
             Your job is to decide which agent to run based on the current state of the user and what they've asked to do. 
             You run an agent by calling the appropriate tool for that agent.
-            You do not need to call more than one tool.
-            You do not need to figure out dependencies between agents; the agents will handle that themselves.
+            You do not have to call more than one tool.
+            You do not have to figure out dependencies between agents; the agents will handle that themselves.
                             
             If you did not call any tools, return the string "FAILED" without quotes and nothing else.
         """)
 
         agent_worker = FunctionCallingAgentWorker.from_tools(
             tools=tools,
-            llm=ctx.data["llm"],
+            llm=context.data["llm"],
             allow_parallel_tool_calls=False,
             system_prompt=system_prompt
         )
-        ctx.data["orchestrator"] = agent_worker.as_agent()        
+        context.data["orchestrator"] = agent_worker.as_agent()        
         
-        orchestrator = ctx.data["orchestrator"]
-        response = str(orchestrator.chat(ev.request)) # here we're passing the user's request to the orchestrator so it can decide what to do
+        orchestrator = context.data["orchestrator"]
+        response = str(orchestrator.chat(request))
 
         if response == "FAILED":
             print("Orchestration agent failed to return a valid speaker; try again")
-            return OrchestratorEvent(request=ev.request)
+            return OrchestratorEvent(request=request)
         
-    @step(pass_context=True)
-    async def stock_lookup(self, ctx: Context, ev: StockLookupEvent) -> ConciergeEvent:
+    @step()
+    async def concierge(self, ctx: Context, ev: ConciergeEvent) -> StopEvent:
+        
+        global context
+        request = context.data.get('request')
+        just_completed = context.data.get('just_completed')
+        need_help = context.data.get('need_help')
+        #overall_request = context.data.get('overall_request')
+
+        print("Concierge received request: ", 
+              request, 'with just_completed: ', 
+              just_completed, ', need_help: ', 
+              need_help, 'and overall_request: ', None)
+        
+        # initialize concierge if not already done
+        if ("concierge" not in context.data):
+            system_prompt = (f"""
+                You are a helpful assistant that is helping a user navigate a financial system.
+                Your job is to ask the user questions to figure out what they want to do, and give them the available things they can do.
+                That includes
+                * looking up a stock price            
+                * authenticating the user
+                * checking an account balance
+                * transferring money between accounts          
+            """) #[TAKEN OUT]You should start by listing the things you can help them do.  
+
+            agent_worker = FunctionCallingAgentWorker.from_tools(
+                tools=[],
+                llm=context.data["llm"],
+                allow_parallel_tool_calls=False,
+                system_prompt=system_prompt
+            )
+            context.data["concierge"] = agent_worker.as_agent()        
+
+        concierge = context.data["concierge"]
+
+        # If concierge is called it's because
+            # 1. The user has just completed a task
+            # 2. The user needs help with a task
+            # 3. [NOT IMPLEMENTED] It's the first time experience
+
+        if context.data["overall_request"] is not None:
+            print("There's an overall request in progress, it's ", context.data["overall_request"])
+            last_request = context.data["overall_request"]
+            context.data["overall_request"] = None
+            context.data["request"] = last_request
+            return OrchestratorEvent()
+        
+        elif (just_completed is not None):
+            response = concierge.chat(f"FYI, the user has just completed the task: {just_completed}")
+            print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
+        elif (need_help):
+            print("The previous process needs help with ", request)
+            context.data["request"] = "The previous agent couldn't help me with this task: "+request + " can you?"
+            # Upgraded:
+            return OrchestratorEvent()
+        
+        return StopEvent(result={'next_call': OrchestratorEvent, 'params': None})
+        #else:
+            # first time experience
+            #response = concierge.chat("Hello!")
+
+        #print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
+        #user_msg_str = input("> ").strip()
+        #return OrchestratorEvent(request=user_msg_str)
+        
+    @step()
+    async def authenticate(self, ctx: Context, ev: AuthenticateEvent) -> StopEvent | ConciergeEvent:
+
+        global context
+
+        if ("authentication_agent" not in context.data):
+            """ def store_username(username: str) -> None:
+                Adds the username to the user state.
+                print("Recording username")
+                context.data["user"]["username"] = username """
+
+            def login(username: str, password: str) -> None:
+                """Given a username and a password, logs in and stores a session token in the user state."""
+                context.data["user"]["username"] = username
+                print(f"Logging in {ctx.data['user']['username']}")
+                # todo: actually check the password
+                session_token = "fs2j_tte0_74cj"
+                context.data["user"]["session_token"] = session_token
+            
+            def is_authenticated() -> bool:
+                """Checks if the user has a session token."""
+                print("Checking if authenticated")
+                if ctx.data["user"]["session_token"] is not None:
+                    return True
+
+            system_prompt = (f"""
+                You are a helpful assistant that is authenticating a user.
+                Your task is to get a valid session token stored in the user state.
+                To do this, the user must supply you with a username and a valid password. If you are aware they want to authenticate, ask them to supply these.
+                If the user supplies a username and password, call the tool "login" to log them in.
+                Once you've called the login tool successfully, call the tool named "done" to signal that you are done. Do this before you respond.
+                If the user asks to do anything other than authenticate, call the tool "need_help" to signal some other agent should help.
+            """)
+
+            context.data["authentication_agent"] = ConciergeAgent(
+                name="Authentication Agent",
+                parent=self,
+                tools=[login, is_authenticated],
+                ctx=context,
+                system_prompt=system_prompt,
+                trigger_event=AuthenticateEvent
+            )
+
+        return context.data["authentication_agent"].handle_event(ev)
+  
+    @step()
+    def account_balance(self, ctx: Context, ev: AccountBalanceEvent) -> StopEvent | AuthenticateEvent | ConciergeEvent:
+        
+        global context
+
+        print(f"Account balance received request: {ev.request}")
+        
+        if("account_balance_agent" not in context.data):
+            def get_account_id(account_name: str) -> str:
+                """Useful for looking up an account ID."""
+                global context
+                print(f"Looking up account ID for {account_name}")
+                account_id = "1234567890"
+                context.data["user"]["account_id"] = account_id
+                return f"Account id is {account_id}"
+            
+            def get_account_balance(account_id: str) -> str:
+                """Useful for looking up an account balance."""
+                global context
+                print(f"Looking up account balance for {account_id}")
+                context.data["user"]["account_balance"] = 1000
+                return f"Account {account_id} has a balance of ${context.data['user']['account_balance']}"
+            
+            def is_authenticated() -> bool:
+                """Checks if the user is authenticated."""
+                global context
+                print("Account balance agent is checking if authenticated")
+                if context.data["user"]["session_token"] is not None:
+                    return True
+                else:
+                    return False
+                
+            def authenticate() -> None:
+                """Call this if the user needs to authenticate."""
+                global context
+                print("Account balance agent is authenticating")
+                context.data["redirecting"] = True
+                context.data["overall_request"] = "Check account balance"
+                context.session.send_event(AuthenticateEvent(request="Authenticate"))
+
+            system_prompt = (f"""
+                You are a helpful assistant that is looking up account balances.
+                The user may not know the account ID of the account they're interested in,
+                so you can help them look it up by the name of the account.
+                The user can only do this if they are authenticated, which you can check with the is_authenticated tool.
+                If they aren't authenticated, call the "authenticate" tool to trigger the start of the authentication process; tell them you have done this.
+                If they're trying to transfer money, they have to check their account balance first, which you can help with.
+                Once you have supplied an account balance, you must call the tool named "done" to signal that you are done. Do this before you respond.
+                If the user asks to do anything other than look up an account balance, call the tool "need_help" to signal some other agent should help.
+            """)
+
+            context.data["account_balance_agent"] = ConciergeAgent(
+                name="Account Balance Agent",
+                parent=self,
+                tools=[get_account_id, get_account_balance, is_authenticated, authenticate],
+                ctx=context,
+                system_prompt=system_prompt,
+                trigger_event=AccountBalanceEvent
+            )
+
+        # TODO: this could programmatically check for authentication and emit an event
+        # but then the agent wouldn't say anything helpful about what's going on.
+
+        return context.data["account_balance_agent"].handle_event(ev)
+    
+    @step()
+    def transfer_money(self, ctx: Context, ev: TransferMoneyEvent) -> StopEvent | AuthenticateEvent | AccountBalanceEvent | ConciergeEvent:
+
+        global context
+        
+        if("transfer_money_agent" not in context.data):
+            def transfer_money(from_account_id: str, to_account_id: str, amount: int) -> None:
+                """Useful for transferring money between accounts."""
+                print(f"Transferring {amount} from {from_account_id} account {to_account_id}")
+                return f"Transferred {amount} to account {to_account_id}"
+            
+            def balance_sufficient(account_id: str, amount: int) -> bool:
+                """Useful for checking if an account has enough money to transfer."""
+                global context
+                # todo: actually check they've selected the right account ID
+                print("Checking if balance is sufficient")
+                if context.data["user"]['account_balance'] >= amount:
+                    return True
+                
+            def has_balance() -> bool:
+                """Useful for checking if an account has a balance."""
+                global context
+                print("Checking if account has a balance")
+                if context.data["user"]["account_balance"] is not None and context.data["user"]["account_balance"] > 0:
+                    print("It does", context.data["user"]["account_balance"])
+                    return True
+                else:
+                    return False
+            
+            def is_authenticated() -> bool:
+                """Checks if the user has a session token."""
+                global context
+                print("Transfer money agent is checking if authenticated")
+                if context.data["user"]["session_token"] is not None:
+                    return True
+                else:
+                    return False
+                
+            def authenticate() -> None:
+                """Call this if the user needs to authenticate."""
+                global context
+                print("Account balance agent is authenticating")
+                context.data["redirecting"] = True
+                context.data["overall_request"] = "Transfer money"
+                context.session.send_event(AuthenticateEvent(request="Authenticate"))
+
+            def check_balance() -> None:
+                """Call this if the user needs to check their account balance."""
+                global context
+                print("Transfer money agent is checking balance")
+                context.data["redirecting"] = True
+                context.data["overall_request"] = "Transfer money"
+                self.send_event(AccountBalanceEvent(request="Check balance"))
+            
+            system_prompt = (f"""
+                You are a helpful assistant that transfers money between accounts.
+                The user can only do this if they are authenticated, which you can check with the is_authenticated tool.
+                If they aren't authenticated, tell them to authenticate first.
+                The user must also have looked up their account balance already, which you can check with the has_balance tool.
+                If they haven't already, tell them to look up their account balance first.
+                Once you have transferred the money, you can call the tool named "done" to signal that you are done. Do this before you respond.
+                If the user asks to do anything other than transfer money, call the tool "done" to signal some other agent should help.
+            """)
+
+            context.data["transfer_money_agent"] = ConciergeAgent(
+                name="Transfer Money Agent",
+                parent=self,
+                tools=[transfer_money, balance_sufficient, has_balance, is_authenticated, authenticate, check_balance],
+                ctx=context,
+                system_prompt=system_prompt,
+                trigger_event=TransferMoneyEvent
+            )
+
+        return context.data["transfer_money_agent"].handle_event(ev)
+
+    @step()
+    async def stock_lookup(self, ctx: Context, ev: StockLookupEvent) -> StopEvent | ConciergeEvent:
+
+        global context
 
         print(f"Stock lookup received request: {ev.request}")
 
-        if ("stock_lookup_agent" not in ctx.data):
+        if ("stock_lookup_agent" not in context.data):
             def lookup_stock_price(stock_symbol: str) -> str:
                 """Useful for looking up a stock price."""
                 print(f"Looking up stock price for {stock_symbol}")
@@ -221,192 +457,28 @@ class ConciergeWorkflow(Workflow):
                 If the user asks to do anything other than look up a stock symbol or price, call the tool "need_help" to signal some other agent should help.
             """)
 
-            ctx.data["stock_lookup_agent"] = ConciergeAgent(
+            context.data["stock_lookup_agent"] = ConciergeAgent(
                 name="Stock Lookup Agent",
                 parent=self,
                 tools=[lookup_stock_price, search_for_stock_symbol],
-                context=ctx,
+                ctx=context,
                 system_prompt=system_prompt,
                 trigger_event=StockLookupEvent
             )
 
-        return ctx.data["stock_lookup_agent"].handle_event(ev)
-
-    @step(pass_context=True)
-    async def authenticate(self, ctx: Context, ev: AuthenticateEvent) -> ConciergeEvent:
-
-        if ("authentication_agent" not in ctx.data):
-            def store_username(username: str) -> None:
-                """Adds the username to the user state."""
-                print("Recording username")
-                ctx.data["user"]["username"] = username
-
-            def login(password: str) -> None:
-                """Given a password, logs in and stores a session token in the user state."""
-                print(f"Logging in {ctx.data['user']['username']}")
-                # todo: actually check the password
-                session_token = "output_of_login_function_goes_here"
-                ctx.data["user"]["session_token"] = session_token
-            
-            def is_authenticated() -> bool:
-                """Checks if the user has a session token."""
-                print("Checking if authenticated")
-                if ctx.data["user"]["session_token"] is not None:
-                    return True
-
-            system_prompt = (f"""
-                You are a helpful assistant that is authenticating a user.
-                Your task is to get a valid session token stored in the user state.
-                To do this, the user must supply you with a username and a valid password. You can ask them to supply these.
-                If the user supplies a username and password, call the tool "login" to log them in.
-                Once you've called the login tool successfully, call the tool named "done" to signal that you are done. Do this before you respond.
-                If the user asks to do anything other than authenticate, call the tool "need_help" to signal some other agent should help.
-            """)
-
-            ctx.data["authentication_agent"] = ConciergeAgent(
-                name="Authentication Agent",
-                parent=self,
-                tools=[store_username, login, is_authenticated],
-                context=ctx,
-                system_prompt=system_prompt,
-                trigger_event=AuthenticateEvent
-            )
-
-        return ctx.data["authentication_agent"].handle_event(ev)
-    
-    @step(pass_context=True)
-    def account_balance(self, ctx: Context, ev: AccountBalanceEvent) -> AuthenticateEvent | ConciergeEvent:
-        
-        if("account_balance_agent" not in ctx.data):
-            def get_account_id(account_name: str) -> str:
-                """Useful for looking up an account ID."""
-                print(f"Looking up account ID for {account_name}")
-                account_id = "1234567890"
-                ctx.data["user"]["account_id"] = account_id
-                return f"Account id is {account_id}"
-            
-            def get_account_balance(account_id: str) -> str:
-                """Useful for looking up an account balance."""
-                print(f"Looking up account balance for {account_id}")
-                ctx.data["user"]["account_balance"] = 1000
-                return f"Account {account_id} has a balance of ${ctx.data['user']['account_balance']}"
-            
-            def is_authenticated() -> bool:
-                """Checks if the user is authenticated."""
-                print("Account balance agent is checking if authenticated")
-                if ctx.data["user"]["session_token"] is not None:
-                    return True
-                else:
-                    return False
-                
-            def authenticate() -> None:
-                """Call this if the user needs to authenticate."""
-                print("Account balance agent is authenticating")
-                ctx.data["redirecting"] = True
-                ctx.data["overall_request"] = "Check account balance"
-                self.send_event(AuthenticateEvent(request="Authenticate"))
-
-            system_prompt = (f"""
-                You are a helpful assistant that is looking up account balances.
-                The user may not know the account ID of the account they're interested in,
-                so you can help them look it up by the name of the account.
-                The user can only do this if they are authenticated, which you can check with the is_authenticated tool.
-                If they aren't authenticated, call the "authenticate" tool to trigger the start of the authentication process; tell them you have done this.
-                If they're trying to transfer money, they have to check their account balance first, which you can help with.
-                Once you have supplied an account balance, you must call the tool named "done" to signal that you are done. Do this before you respond.
-                If the user asks to do anything other than look up an account balance, call the tool "need_help" to signal some other agent should help.
-            """)
-
-            ctx.data["account_balance_agent"] = ConciergeAgent(
-                name="Account Balance Agent",
-                parent=self,
-                tools=[get_account_id, get_account_balance, is_authenticated, authenticate],
-                context=ctx,
-                system_prompt=system_prompt,
-                trigger_event=AccountBalanceEvent
-            )
-
-            # TODO: this could programmatically check for authentication and emit an event
-            # but then the agent wouldn't say anything helpful about what's going on.
-
-        return ctx.data["account_balance_agent"].handle_event(ev)
-    
-    @step(pass_context=True)
-    def transfer_money(self, ctx: Context, ev: TransferMoneyEvent) -> AuthenticateEvent | AccountBalanceEvent | ConciergeEvent:
-
-        if("transfer_money_agent" not in ctx.data):
-            def transfer_money(from_account_id: str, to_account_id: str, amount: int) -> None:
-                """Useful for transferring money between accounts."""
-                print(f"Transferring {amount} from {from_account_id} account {to_account_id}")
-                return f"Transferred {amount} to account {to_account_id}"
-            
-            def balance_sufficient(account_id: str, amount: int) -> bool:
-                """Useful for checking if an account has enough money to transfer."""
-                # todo: actually check they've selected the right account ID
-                print("Checking if balance is sufficient")
-                if ctx.data["user"]['account_balance'] >= amount:
-                    return True
-                
-            def has_balance() -> bool:
-                """Useful for checking if an account has a balance."""
-                print("Checking if account has a balance")
-                if ctx.data["user"]["account_balance"] is not None and ctx.data["user"]["account_balance"] > 0:
-                    print("It does", ctx.data["user"]["account_balance"])
-                    return True
-                else:
-                    return False
-            
-            def is_authenticated() -> bool:
-                """Checks if the user has a session token."""
-                print("Transfer money agent is checking if authenticated")
-                if ctx.data["user"]["session_token"] is not None:
-                    return True
-                else:
-                    return False
-                
-            def authenticate() -> None:
-                """Call this if the user needs to authenticate."""
-                print("Account balance agent is authenticating")
-                ctx.data["redirecting"] = True
-                ctx.data["overall_request"] = "Transfer money"
-                self.send_event(AuthenticateEvent(request="Authenticate"))
-
-            def check_balance() -> None:
-                """Call this if the user needs to check their account balance."""
-                print("Transfer money agent is checking balance")
-                ctx.data["redirecting"] = True
-                ctx.data["overall_request"] = "Transfer money"
-                self.send_event(AccountBalanceEvent(request="Check balance"))
-            
-            system_prompt = (f"""
-                You are a helpful assistant that transfers money between accounts.
-                The user can only do this if they are authenticated, which you can check with the is_authenticated tool.
-                If they aren't authenticated, tell them to authenticate first.
-                The user must also have looked up their account balance already, which you can check with the has_balance tool.
-                If they haven't already, tell them to look up their account balance first.
-                Once you have transferred the money, you can call the tool named "done" to signal that you are done. Do this before you respond.
-                If the user asks to do anything other than transfer money, call the tool "done" to signal some other agent should help.
-            """)
-
-            ctx.data["transfer_money_agent"] = ConciergeAgent(
-                name="Transfer Money Agent",
-                parent=self,
-                tools=[transfer_money, balance_sufficient, has_balance, is_authenticated, authenticate, check_balance],
-                context=ctx,
-                system_prompt=system_prompt,
-                trigger_event=TransferMoneyEvent
-            )
-
-        return ctx.data["transfer_money_agent"].handle_event(ev)
+        return context.data["stock_lookup_agent"].handle_event(ev)
+  
 
 class ConciergeAgent():
     name: str
     parent: Workflow
     tools: list[FunctionTool]
     system_prompt: str
-    context: Context
+    ctx: Context
     current_event: Event
     trigger_event: Event
+
+    global context
 
     def __init__(
             self,
@@ -414,28 +486,42 @@ class ConciergeAgent():
             tools: List[Callable], 
             system_prompt: str, 
             trigger_event: Event,
-            context: Context,
+            ctx: Context,
             name: str,
         ):
+
+        
+        
         self.name = name
         self.parent = parent
-        self.context = context
+        #self.ctx = context
         self.system_prompt = system_prompt
-        self.context.data["redirecting"] = False
+        context.data["redirecting"] = False
         self.trigger_event = trigger_event
 
         # set up the tools including the ones everybody gets
         def done() -> None:
+            global context
             """When you complete your task, call this tool."""
-            print(f"{self.name} is complete")
-            self.context.data["redirecting"] = True
-            parent.send_event(ConciergeEvent(just_completed=self.name))
+            print(f"{self.name} is complete, calling Concierge")
+            context.data["redirecting"] = True
+            context.data["just_completed"] = self.name
+            context.data['redirecting_to'] = ConciergeEvent
+            #parent.send_event(ConciergeEvent())
+            #parent.send_event(StopEvent())
+            #parent.send_event(ConciergeEvent(just_completed=self.name))
 
         def need_help() -> None:
+            global context
             """If the user asks to do something you don't know how to do, call this."""
-            print(f"{self.name} needs help")
-            self.context.data["redirecting"] = True
-            parent.send_event(ConciergeEvent(request=self.current_event.request,need_help=True))
+            print(f"{self.name} needs help, calling Concierge")
+            context.data["redirecting"] = True
+            context.data["need_help"] = True
+            context.data["request"] = self.current_event.request
+            context.data['redirecting_to'] = ConciergeEvent
+            #parent.send_event(ConciergeEvent())
+            #parent.send_event(StopEvent())
+            #parent.send_event(ConciergeEvent(request=self.current_event.request,))
 
         self.tools = [
             FunctionTool.from_defaults(fn=done),
@@ -446,45 +532,61 @@ class ConciergeAgent():
 
         agent_worker = FunctionCallingAgentWorker.from_tools(
             self.tools,
-            llm=self.context.data["llm"],
+            llm=context.data["llm"],
             allow_parallel_tool_calls=False,
             system_prompt=self.system_prompt
         )
         self.agent = agent_worker.as_agent()        
 
-    def handle_event(self, ev: Event, user_msg_str: str = None):
+    def handle_event(self, ev: Event):
+        global context
         self.current_event = ev
 
-        response = str(self.agent.chat(ev.request)) # here we're passing the user's request to the agent so it can decide what to do
+        # Check if we have a request in the event, if not, use the one from the context
+        if ev.get('request') is None:
+            request = context.data['request']
+        else:
+            request = ev.get('request')
+
+        # HERE THE AGENT WILL CHOOSE AND USE A TOOL FROM THE TOOL LIST
+        response = str(self.agent.chat(request)) 
+
         print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
 
-        url = "http://127.0.0.1:3008/v1/messages"
-        data = {
-            "number": "5491131500591",
-            "message": str(response)
-        }
-
-        response = requests.post(url, json=data, headers={"Content-Type": "application/json"})
-        print('Request sent to server')
-        print(Fore.MAGENTA + str(response.status_code) + Style.RESET_ALL)
-        #print(Fore.MAGENTA + str(response.json()) + Style.RESET_ALL)
-
         # if they're sending us elsewhere we're done here
-        if self.context.data["redirecting"]:
-            self.context.data["redirecting"] = False
-            return None
+        if context.data["redirecting"]:
+            print(Fore.BLUE + f"Redirecting from {self.name}" + Style.RESET_ALL)
+            context.data["redirecting"] = False
+            return context.data['redirecting_to']()
+        
+        trigger_event = self.trigger_event
+        print(Fore.BLUE + f"Trigger event: {trigger_event} is returning from handle_event" + Style.RESET_ALL)
 
-        # otherwise, get some user input and then loop
-        #user_msg_str = input("> ").strip()
-        return self.trigger_event(request='thank you for the help, we are done.')#(request=user_msg_str)
+        # otherwise, we will need to get some user input, so we return the StopEvent
+        return StopEvent(result={'next_call': trigger_event, 'params': None})
+
+
+
+
 
 #draw_all_possible_flows(ConciergeWorkflow,filename="concierge_flows.html")
 
 async def main():
-    c = ConciergeWorkflow(timeout=1200, verbose=True)
-    result = await c.run()
-    #print(result)
-    return 'finished'
+    workflow = ConciergeWorkflow(timeout=1200, verbose=True)
+    result = await workflow.run_step(message="hi! i would like to check the AAPL stock price", event=OrchestratorEvent)
+
+    # Iterate until done
+    while not workflow.is_done():
+        result = await workflow.run_step()
+
+    print(str(result))
+
+    """ result = await workflow.run_step(message="sure, my username is pedrobergaglio and my password is 1234", event=result['next_call'], params=result['params'])
+
+    # Iterate until done
+    while not workflow.is_done():
+        result = await workflow.run_step() """
+
 
 if __name__ == "__main__":
     import asyncio

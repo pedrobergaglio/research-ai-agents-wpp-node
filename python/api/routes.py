@@ -1,8 +1,7 @@
 # api/routes.py
 from colorama import Fore, Back, Style
-
 from flask import request, jsonify
-from .services import *
+from .services import handle_user_message
 import logging
 import asyncio
 
@@ -21,11 +20,10 @@ def configure_routes(app):
     @app.route('/chat', methods=['POST'])
     async def chat():
         data = request.json
-        print(Fore.MAGENTA + 'routes ' + str(data) + Style.RESET_ALL)
-        #response = data['event_type']#process_chat_message(data)
+        print(Fore.BLUE + 'routes ' + str(data) + Style.RESET_ALL)
         response = await handle_user_message(data['from'], data['message'])
-        print(Fore.MAGENTA + 'routes ' + str(response) + str(type(response)) + Style.RESET_ALL)
-        return jsonify({'response':str(response)})
+        print(Fore.BLUE + 'routes ' + str(response) + str(type(response)) + Style.RESET_ALL)
+        return jsonify({'response': str(response)})
     
     @app.route('/', methods=['GET'])
     def home():

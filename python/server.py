@@ -2,15 +2,23 @@
 from colorama import Fore, Back, Style
 from flask import Flask
 from api.routes import configure_routes
-
 from chatbot.workflows import *
+import asyncio
+from api.services import workflow
+import werkzeug.serving
 
 app = Flask(__name__)
 configure_routes(app)
 
-StartEvent
+async def run_workflow():
+    await workflow.run(event=InitializeEvent)
 
 if __name__ == '__main__':
+
+    """ if not werkzeug.serving.is_running_from_reloader():
+        # Run the asynchronous workflow only if not running from the reloader
+        asyncio.run(run_workflow()) """
+
     app.run(port=5000, debug=True)
 
 

@@ -111,6 +111,6 @@ const default_setup = (bot: any, adapterProvider: any) => {
         console.log('Received POST request on /v1/messages');
         const { number, message, urlMedia } = req.body;
         await bot.sendMessage(number, message, { media: urlMedia ?? null });
-        return res.end('sended');
+        return res.end('sent');
     }));
 };
