@@ -3,7 +3,7 @@
 from chatbot.workflows import *
 import json
 from llama_index.core.workflow import Workflow
-from llama_index.core.workflow.session import WorkflowSession
+#from llama_index.core.workflow.session import WorkflowSession
 
 # Initialize the workflow
 workflow = ConciergeWorkflow(timeout=1200, verbose=True)

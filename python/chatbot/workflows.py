@@ -3,7 +3,7 @@ context = None
 
 from contextlib import contextmanager
 from copy import deepcopy
-
+""" 
 @contextmanager
 def save_session(context):
     # Save the current session
@@ -13,7 +13,7 @@ def save_session(context):
     finally:
         # Restore the previous session
         context.session = previous_session
-
+ """
 #from api.utils import *     
 
 from typing import Union
@@ -65,7 +65,7 @@ class HeaderEvent(Event):
 
 class ConciergeWorkflow(Workflow):
 
-    @step()
+    @step(pass_context=True)
     async def header(self, ctx: Context, ev: StartEvent | HeaderEvent) -> Union[OrchestratorEvent, AuthenticateEvent, StopEvent, InitializeEvent, TransferMoneyEvent, AccountBalanceEvent, StockLookupEvent]:
 
         global context
@@ -91,8 +91,8 @@ class ConciergeWorkflow(Workflow):
         # Return called event
         return context.data['header_event']()
 
-    @step()
-    async def initialize(self, ev: InitializeEvent) -> HeaderEvent:#ConciergeEvent:
+    @step(pass_context=True)
+    async def initialize(self, ctx: Context, ev: InitializeEvent) -> HeaderEvent:#ConciergeEvent:
 
         global context
 
@@ -111,12 +111,12 @@ class ConciergeWorkflow(Workflow):
             print(Fore.MAGENTA + 'Added llm' + Style.RESET_ALL)
             context.data['llm'] = OpenAI(model="gpt-4o-mini", temperature=0.4)
         
-        setattr(context, 'previous_session', context.session)
+        #setattr(context, 'previous_session', context.session)
 
         return HeaderEvent()
  
-    @step()
-    async def orchestrator(self, ev: OrchestratorEvent) -> Union[OrchestratorEvent, AuthenticateEvent, StopEvent, InitializeEvent, TransferMoneyEvent, AccountBalanceEvent, StockLookupEvent]:
+    @step(pass_context=True)
+    async def orchestrator(self, ctx: Context, ev: OrchestratorEvent) -> Union[OrchestratorEvent, AuthenticateEvent, StopEvent, InitializeEvent, TransferMoneyEvent, AccountBalanceEvent, StockLookupEvent]:
 
         global context
         request = context.data.get('request')
@@ -126,39 +126,37 @@ class ConciergeWorkflow(Workflow):
         def emit_authenticate() -> bool:
             """Call this if the user wants to authenticate"""
             print("__emitted: authenticate")
-            with save_session(context):
-                context.session.send_event(AuthenticateEvent(request=request))
+            ctx.session.send_event(AuthenticateEvent(request=request))
             return True
         
         def emit_stock_lookup() -> bool:
             """Call this if the user wants to look up a stock price."""      
             print("__emitted: stock lookup")    
-            with save_session(context):
-                context.session.send_event(StockLookupEvent(request=request))
+            ctx.session.send_event(StockLookupEvent(request=request))
             return True
         
         def emit_account_balance() -> bool:
             """Call this if the user wants to check an account balance."""
             print("__emitted: account balance")
-            context.session.send_event(AccountBalanceEvent(request=request))
+            ctx.session.send_event(AccountBalanceEvent(request=request))
             return True
 
         def emit_transfer_money() -> bool:
             """Call this if the user wants to transfer money."""
             print("__emitted: transfer money")
-            context.session.send_event(TransferMoneyEvent(request=request))
+            ctx.session.send_event(TransferMoneyEvent(request=request))
             return True
 
         def emit_concierge() -> bool:
             """Call this if the user wants to do something else or you can't figure out what they want to do."""
             print("__emitted: concierge")
-            context.session.send_event(ConciergeEvent(request=request))
+            ctx.session.send_event(ConciergeEvent(request=request))
             return True
         
         def emit_stop() -> bool:
             """Call this if the user wants to stop or exit the system."""
             print("__emitted: stop")
-            context.session.send_event(StopEvent())
+            ctx.session.send_event(StopEvent())
             return True
 
         tools = [
@@ -177,7 +175,7 @@ class ConciergeWorkflow(Workflow):
             You do not have to call more than one tool.
             You do not have to figure out dependencies between agents; the agents will handle that themselves.
                             
-            If you are not calling any tools, return the string "FAILED" without quotes and a technical description of why you can't call the function, because the developer is not being able to find the problem.
+            If you are not being able to call any tools, return the string "FAILED" with the exact error you are finding while calling the function, because the developer is not being able to find the problem.
         """)#nothing else
 
         agent_worker = FunctionCallingAgentWorker.from_tools(
@@ -196,8 +194,8 @@ class ConciergeWorkflow(Workflow):
             print("Orchestration agent failed to return a valid speaker; try again")
             return OrchestratorEvent(request=request)
         
-    @step()
-    async def concierge(self, ev: ConciergeEvent) -> StopEvent:
+    @step(pass_context=True)
+    async def concierge(self, ctx: Context, ev: ConciergeEvent) -> StopEvent:
         
         global context
         request = context.data.get('request')
@@ -262,8 +260,8 @@ class ConciergeWorkflow(Workflow):
         #user_msg_str = input("> ").strip()
         #return OrchestratorEvent(request=user_msg_str)
         
-    @step()
-    async def authenticate(self, ev: AuthenticateEvent) -> StopEvent | ConciergeEvent:
+    @step(pass_context=True)
+    async def authenticate(self, ctx: Context, ev: AuthenticateEvent) -> StopEvent | ConciergeEvent:
 
         global context
 
@@ -306,12 +304,10 @@ class ConciergeWorkflow(Workflow):
 
         return context.data["authentication_agent"].handle_event(ev)
   
-    @step()
-    def account_balance(self, ev: AccountBalanceEvent) -> StopEvent | AuthenticateEvent | ConciergeEvent:
+    @step(pass_context=True)
+    def account_balance(self, ctx: Context, ev: AccountBalanceEvent) -> StopEvent | AuthenticateEvent | ConciergeEvent:
         
         global context
-
-        print(f"Account balance received request: {ev.request}")
         
         if("account_balance_agent" not in context.data):
             def get_account_id(account_name: str) -> str:
@@ -367,8 +363,8 @@ class ConciergeWorkflow(Workflow):
 
         return context.data["account_balance_agent"].handle_event(ev)
     
-    @step()
-    def transfer_money(self, ev: TransferMoneyEvent) -> StopEvent | AuthenticateEvent | AccountBalanceEvent | ConciergeEvent:
+    @step(pass_context=True)
+    def transfer_money(self, ctx: Context, ev: TransferMoneyEvent) -> StopEvent | AuthenticateEvent | AccountBalanceEvent | ConciergeEvent:
 
         global context
         
@@ -411,6 +407,7 @@ class ConciergeWorkflow(Workflow):
                 print("Account balance agent is authenticating")
                 context.data["redirecting"] = True
                 context.data["overall_request"] = "Transfer money"
+                print(str(self))
                 self.send_event(AuthenticateEvent(request="Authenticate"))
 
             def check_balance() -> None:
@@ -441,8 +438,8 @@ class ConciergeWorkflow(Workflow):
 
         return context.data["transfer_money_agent"].handle_event(ev)
 
-    @step()
-    async def stock_lookup(self, ev: StockLookupEvent) -> StopEvent | ConciergeEvent:
+    @step(pass_context=True)
+    async def stock_lookup(self, ctx: Context, ev: StockLookupEvent) -> StopEvent | ConciergeEvent:
 
         global context
 
@@ -578,11 +575,13 @@ class ConciergeAgent():
 
 
 
-draw_all_possible_flows(ConciergeWorkflow,filename="concierge_flows.html")
+#draw_all_possible_flows(ConciergeWorkflow,filename="concierge_flows.html")
 
 async def main():
     workflow = ConciergeWorkflow(timeout=1200, verbose=True)
-    result = await workflow.run_step(message="hi! i would like to authenticate", event=OrchestratorEvent)
+    
+    result = await workflow.run_step(message="hi! i would like to check my balance", event=OrchestratorEvent)
+    #result = await workflow.run_step(message="hi! i would like to authenticate", event=OrchestratorEvent)
 
     # Iterate until done
     while not workflow.is_done():
@@ -598,7 +597,7 @@ async def main():
 
     print(str(result))
     
-    result = await workflow.run_step(message="now i would like to check the price of the AAPL stock", event=result['next_call'], params=result['params'])
+    result = await workflow.run_step(message="i would like to check the account 7652", event=result['next_call'], params=result['params'])
 
     # Iterate until done
     while not workflow.is_done():

@@ -5,7 +5,7 @@ from api.routes import configure_routes
 from chatbot.workflows import *
 import asyncio
 from api.services import workflow
-import werkzeug.serving
+#import werkzeug.serving
 
 app = Flask(__name__)
 configure_routes(app)
