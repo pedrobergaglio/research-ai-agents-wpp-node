@@ -1,7 +1,6 @@
 python-dotenv
-dotenv
 llama_index
 colorama
 llama_index.utils.workflow
 requests
-'flask[async]'
+flask[async]

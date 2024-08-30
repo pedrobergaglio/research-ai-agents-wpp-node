@@ -108,7 +108,7 @@ class ConciergeWorkflow(Workflow):
         context.data["llm"] = OpenAI(model="gpt-4o-mini",temperature=0.4)
 
         if 'llm' not in context.data:
-            print(Fore.MAGENTA + 'Added llm' + Style.RESET_ALL)
+            print(Fore.BLUE + 'Added llm' + Style.RESET_ALL)
             context.data['llm'] = OpenAI(model="gpt-4o-mini", temperature=0.4)
         
         #setattr(context, 'previous_session', context.session)
@@ -217,7 +217,9 @@ class ConciergeWorkflow(Workflow):
                 * looking up a stock price            
                 * authenticating the user
                 * checking an account balance
-                * transferring money between accounts          
+                * transferring money between accounts  
+
+                If you find an issue, please inform it exactly so the developer understands it and fix it, this is a development enviroment.
             """) #[TAKEN OUT]You should start by listing the things you can help them do.  
 
             agent_worker = FunctionCallingAgentWorker.from_tools(
@@ -244,7 +246,7 @@ class ConciergeWorkflow(Workflow):
         
         elif (just_completed is not None):
             response = concierge.chat(f"FYI, the user has just completed the task: {just_completed}")
-            print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
+            print(Fore.MAGENTA +"Concierge: "+ str(response) + Style.RESET_ALL)
         elif (need_help):
             print("The previous process needs help with ", request)
             context.data["request"] = "The previous agent couldn't help me with this task: "+request + " can you?"
@@ -252,13 +254,6 @@ class ConciergeWorkflow(Workflow):
             return OrchestratorEvent()
         
         return StopEvent(result={'next_call': OrchestratorEvent, 'params': None})
-        #else:
-            # first time experience
-            #response = concierge.chat("Hello!")
-
-        #print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
-        #user_msg_str = input("> ").strip()
-        #return OrchestratorEvent(request=user_msg_str)
         
     @step(pass_context=True)
     async def authenticate(self, ctx: Context, ev: AuthenticateEvent) -> StopEvent | ConciergeEvent:
@@ -292,6 +287,7 @@ class ConciergeWorkflow(Workflow):
                 If the user supplies a username and password, call the tool "login" to log them in.
                 Once you've called the login tool successfully, call the tool named "done" to signal that you are done. Do this before you respond.
                 If the user asks to do anything other than authenticate, call the tool "need_help" to signal some other agent should help.
+                If you find an issue, please inform it exactly so the developer understands it and fix it, this is a development enviroment.
             """)
 
             context.data["authentication_agent"] = ConciergeAgent(
@@ -407,7 +403,6 @@ class ConciergeWorkflow(Workflow):
                 print("Account balance agent is authenticating")
                 context.data["redirecting"] = True
                 context.data["overall_request"] = "Transfer money"
-                print(str(self))
                 self.send_event(AuthenticateEvent(request="Authenticate"))
 
             def check_balance() -> None:
@@ -426,6 +421,7 @@ class ConciergeWorkflow(Workflow):
                 If they haven't already, tell them to look up their account balance first.
                 Once you have transferred the money, you can call the tool named "done" to signal that you are done. Do this before you respond.
                 If the user asks to do anything other than transfer money, call the tool "done" to signal some other agent should help.
+                If you find an issue, please inform it exactly so the developer understands it and fix it, this is a development enviroment.
             """)
 
             context.data["transfer_money_agent"] = ConciergeAgent(
@@ -463,6 +459,7 @@ class ConciergeWorkflow(Workflow):
                 You can only look up stock symbols given to you by the search_for_stock_symbol tool, don't make them up. Trust the output of the search_for_stock_symbol tool even if it doesn't make sense to you.
                 Once you have retrieved a stock price, you *must* call the tool named "done" to signal that you are done. Do this before you respond.
                 If the user asks to do anything other than look up a stock symbol or price, call the tool "need_help" to signal some other agent should help.
+                If you find an issue, please inform it exactly so the developer understands it and fix it, this is a development enviroment.
             """)
 
             context.data["stock_lookup_agent"] = ConciergeAgent(
@@ -556,7 +553,7 @@ class ConciergeAgent():
         # HERE THE AGENT WILL CHOOSE AND USE A TOOL FROM THE TOOL LIST
         response = str(self.agent.chat(request)) 
 
-        print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
+        print(Fore.MAGENTA + f'{self.name}: '+str(response) + Style.RESET_ALL)
 
         # if they're sending us elsewhere we're done here
         if context.data["redirecting"]:
@@ -580,14 +577,14 @@ class ConciergeAgent():
 async def main():
     workflow = ConciergeWorkflow(timeout=1200, verbose=True)
     
-    result = await workflow.run_step(message="hi! i would like to check my balance", event=OrchestratorEvent)
+    result = await workflow.run_step(message="hi! i would like to make a transfer", event=OrchestratorEvent)
     #result = await workflow.run_step(message="hi! i would like to authenticate", event=OrchestratorEvent)
 
     # Iterate until done
     while not workflow.is_done():
         result = await workflow.run_step()
 
-    print(str(result))
+    print(Fore.GREEN + str(result) +Style.RESET_ALL)
 
     result = await workflow.run_step(message="sure, my username is pedro and my password is 1234", event=result['next_call'], params=result['params'])
 
@@ -595,15 +592,15 @@ async def main():
     while not workflow.is_done():
         result = await workflow.run_step()
 
-    print(str(result))
+    print(Fore.GREEN + str(result) +Style.RESET_ALL)
     
-    result = await workflow.run_step(message="i would like to check the account 7652", event=result['next_call'], params=result['params'])
+    """ result = await workflow.run_step(message="i would like to check the account 7652", event=result['next_call'], params=result['params'])
 
     # Iterate until done
     while not workflow.is_done():
         result = await workflow.run_step()
     
-    print(str(result))
+    print(str(result)) """
 
 
 if __name__ == "__main__":
