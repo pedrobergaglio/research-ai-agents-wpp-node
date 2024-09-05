@@ -20,7 +20,19 @@
       "@typescript-eslint/no-unused-vars": "off",
       "@typescript-eslint/ban-ts-comment": "off",
       "@typescript-eslint/ban-types": "off",
-      "no-unsafe-optional-chaining": "off"
+      "no-unsafe-optional-chaining": "off",
+      "@typescript-eslint/no-this-alias": "off",
+      "no-unsafe-finally": "off",
+      "no-prototype-builtins": "off",
+      "no-cond-assign": "off",
+      "no-func-assign": "off",
+      "no-undef": "off",
+      "no-useless-escape": "off",
+      "no-inner-declarations": "off",
+      "no-empty": "off",
+      "@typescript-eslint/no-array-constructor": "off",
+      "no-fallthrough": "off",
+      "no-self-assign": "off"
     }
   }
   

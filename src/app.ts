@@ -13,7 +13,7 @@ const credentials = {
     port: 3306,
 }
 const providerCredentials = {
-    jwtToken: process.env.JWT_TOKEN,
+    jwtToken: process.env.JWT_TOKEN2,
     numberId: process.env.NUMBER_ID,
     verifyToken: process.env.VERIFY_TOKEN,
     version: 'v20.0'

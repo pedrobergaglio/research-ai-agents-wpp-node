@@ -10,15 +10,16 @@ export const setupApi = (bot: any, adapterProvider: any) => {
     default_setup(bot, adapterProvider);
 
     adapterProvider.on('message', (ctx) => {
-        console.log('Complete Received Message Context:', JSON.stringify(ctx, null, 2));
+
         result = isOnlyEmojis(ctx.body)
         if (result) {insert_feedback(ctx, result)}
 
         //console.log('Checking user authentication...', check_user_auth(ctx, result));
 
         try {
-            console.log('Message event triggered');
-            console.log('Complete Received Message Context:', JSON.stringify(ctx, null, 2));
+
+            //console.log('Complete Received Message Context:', JSON.stringify(ctx, null, 2));
+            console.log('Received Message:', JSON.stringify(ctx.body, null, 2));
             const result = isOnlyEmojis(ctx.body);
             if (result) {
                 insert_feedback(ctx, result);

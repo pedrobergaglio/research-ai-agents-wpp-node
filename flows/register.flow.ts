@@ -13,3 +13,31 @@ export const register = addKeyword<Provider, Database>(utils.setEvent('REGISTER_
     .addAction(async (_, { flowDynamic, state }) => {
         await flowDynamic(`${state.get('name')}, thanks for your information!: Your age: ${state.get('age')}`)
     })
+
+export const main = addKeyword(EVENTS.WELCOME)
+    //.addAnswer('WELCOME')
+    .addAction(
+        async (ctx) => {
+
+            console.log('Running main flow');
+    
+            const request = {
+                method: "POST",
+                body: JSON.stringify({
+                    "message": ctx.body,
+                    "from": ctx.from
+                    }),
+                headers: {
+                    "Content-Type": "application/json",
+                    },
+            };
+
+            console.log('Request sent to Agent:', request);
+
+            // Call the chatbot API
+            const response = await fetch("http://127.0.0.1:5000/chat", request);
+            const response_str = await response.json();
+            console.log('Request response:', response_str);
+            return
+    }
+);

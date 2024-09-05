@@ -1,6 +1,8 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+from api.utils import send_message_to_user
+
 from llama_index.core.workflow import (
     step, 
     Context, 
@@ -108,6 +110,10 @@ class ConciergeWorkflow(Workflow):
             response = concierge.chat("Hello!")
 
         print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
+
+        # send message to user using whatsapp api
+        await send_message_to_user(message=str(response), to='5491131500591')
+
         #user_msg_str = input("> ").strip()
         user_msg_str = await user_input.get()
         return OrchestratorEvent(request=user_msg_str)
@@ -448,6 +454,9 @@ class ConciergeAgent():
 
         response = str(self.agent.chat(ev.request))
         print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
+
+        # send message to user using whatsapp api
+        await send_message_to_user(message=str(response), to='5491131500591')
 
         # if they're sending us elsewhere we're done here
         if self.context.data["redirecting"]:
