@@ -8,7 +8,7 @@ const PORT = process.env.PORT ?? 3008
 const credentials = {
     host: process.env.MYSQL_DB_HOST,
     user: process.env.MYSQL_DB_USER,
-    database: process.env.MYSQL_DB_NAME,
+    database: process.env.MYSQL_SYSTEM_DB_NAME,
     password: process.env.MYSQL_DB_PASSWORD,
     port: 3306,
 }
