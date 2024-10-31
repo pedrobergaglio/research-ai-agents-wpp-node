@@ -6,7 +6,7 @@ from llama_index.core.workflow import Workflow
 #from llama_index.core.workflow.session import WorkflowSession
 
 # Initialize the workflow
-workflow = ConciergeWorkflow(timeout=1200, verbose=True)
+workflow = OrderWorkflow(timeout=1200, verbose=True)
 
 # In-memory store for user workflow states
 user_workflow_states = {}

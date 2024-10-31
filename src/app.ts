@@ -4,7 +4,7 @@ import { MetaProvider as Provider } from '@builderbot/provider-meta'
 import { setupApi } from './api'; // Adjust the import according to your project structure
 import { flow } from 'flows'; // Adjust the import according to your project structure
 
-const PORT = process.env.PORT ?? 3008
+const PORT = 3008//process.env.PORT ?? 3008
 const credentials = {
     host: process.env.MYSQL_DB_HOST,
     user: process.env.MYSQL_DB_USER,
@@ -13,7 +13,7 @@ const credentials = {
     port: 3306,
 }
 const providerCredentials = {
-    jwtToken: process.env.JWT_TOKEN2,
+    jwtToken: process.env.JWT_TOKEN,
     numberId: process.env.NUMBER_ID,
     verifyToken: process.env.VERIFY_TOKEN,
     version: 'v20.0'

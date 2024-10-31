@@ -1,7 +1,66 @@
-from dotenv import load_dotenv
-load_dotenv()
-
 from api.utils import send_message_to_user
+
+import requests
+from typing import List, Optional, Literal
+from datetime import datetime
+from llama_index.core.query_pipeline import QueryPipeline as QP
+from llama_index.legacy.service_context import ServiceContext
+from llama_index.core import VectorStoreIndex, load_index_from_storage
+from sqlalchemy import text
+from llama_index.core.schema import TextNode
+from llama_index.core.storage import StorageContext
+from pathlib import Path
+from typing import Dict
+from llama_index.core.retrievers import SQLRetriever
+from typing import List
+from llama_index.core.query_pipeline import FnComponent
+
+from llama_index.core.query_pipeline import (
+    QueryPipeline as QP,
+    Link,
+    InputComponent,
+    CustomQueryComponent,
+)
+from llama_index.core.workflow import Workflow
+from pyvis.network import Network
+from llama_index.core.retrievers import SQLRetriever
+from typing import List
+from llama_index.core.query_pipeline import FnComponent
+
+from llama_index.core.prompts.default_prompts import DEFAULT_TEXT_TO_SQL_PROMPT
+from llama_index.core.prompts import PromptTemplate
+from llama_index.core.query_pipeline import FnComponent
+from llama_index.core.llms import ChatResponse
+from llama_index.core.llms import ChatMessage, MessageRole
+import pandas as pd
+
+import json
+import os
+
+# put data into sqlite db
+from sqlalchemy import (
+    create_engine,
+    MetaData,
+    Table,
+    Column,
+    String,
+    Integer,
+)
+import re
+from llama_index.core.objects import (
+    SQLTableNodeMapping,
+    ObjectIndex,
+    SQLTableSchema,
+)
+from llama_index.core import SQLDatabase, VectorStoreIndex
+
+from llama_index.core.query_pipeline import (
+    QueryPipeline as QP,
+    Link,
+    InputComponent,
+    CustomQueryComponent,
+)
+from dotenv import load_dotenv
 
 from llama_index.core.workflow import (
     step, 
@@ -11,18 +70,117 @@ from llama_index.core.workflow import (
     StartEvent, 
     StopEvent
 )
-from llama_index.llms.openai import OpenAI
 #from llama_index.llms.anthropic import Anthropic
 from llama_index.core.agent import FunctionCallingAgentWorker
 from llama_index.core.tools import FunctionTool
 from enum import Enum
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Tuple
 from llama_index.utils.workflow import draw_all_possible_flows
 from colorama import Fore, Back, Style
 import asyncio
+import nest_asyncio
+from pydantic import BaseModel, Field
+from llama_index.llms.openai import OpenAI as OpenAIIndex
+import openai
+
+load_dotenv()
+
+client = openai.OpenAI()
+MODEL = 'gpt-4o-2024-08-06'
+
+# Get the environment variables
+host = os.getenv('MYSQL_DB_HOST')
+user = os.getenv('MYSQL_DB_USER')
+password = os.getenv('MYSQL_DB_PASSWORD')
+database = os.getenv('MYSQL_SALES_DB_NAME')
+
+appsheet_app_id = os.getenv('APPSHEET_APP_ID')
+appsheet_api_key = os.getenv('APPSHEET_API_KEY')
+
+# Construct the connection string
+connection_string = f"mysql+pymysql://{user}:{password}@{host}/{database}"
+
+# Create the engine
+engine = create_engine(connection_string)
+
+metadata_obj = MetaData()
+sql_database = SQLDatabase(engine)
+table_node_mapping = SQLTableNodeMapping(sql_database)
+sql_retriever = SQLRetriever(sql_database)
 
 # Global queue to handle incoming user inputs asynchronously
 user_input = asyncio.Queue()
+
+def index_all_tables(
+    sql_database: SQLDatabase, table_index_dir: str = "./table_indices"
+) -> Dict[str, VectorStoreIndex]:
+    """Index all tables."""
+
+    table_names = ['CATEGORÍAS CAJA', 'CATEGORÍAS PRODUCTOS', 'CLIENTES', 'COLORES', 'ESTADOS', 'IVA', 'MÉTODOS DE PAGO', 'PERSONAL', 'PRODUCTOS', 'PROVEEDORES']
+    # no indexd: CAJA, CHEQUES, PRODUCTOS PEDIDOS, STOCK, CUENTAS CORRIENTES, PEDIDOS, CONTROL DE PRECIOS
+
+    if not Path(table_index_dir).exists():
+        os.makedirs(table_index_dir)
+
+    vector_index_dict = {}
+    engine = sql_database.engine
+    for table_name in table_names: #sql_database.get_usable_table_names():
+        print(f"Indexing rows in table: {table_name}")
+
+        if not os.path.exists(f"{table_index_dir}/{table_name}"):
+            # get all rows from table
+            with engine.connect() as conn:
+
+                columns_query=(
+                    f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{table_name}'"
+                    f"AND TABLE_SCHEMA = '{database}'"
+                )
+
+                cursor = conn.execute(text(columns_query))
+                result = cursor.fetchall()
+                columns = []
+                for column in result:
+                    columns.append(column[0]) # get the first and only element of the tuple (the name)
+
+                cursor = conn.execute(text(f'SELECT * FROM `{table_name}`'))
+                result = cursor.fetchall()
+                row_tups = []
+                for row in result:
+                    row_tups.append(tuple(row))
+                    #print(dict(zip(columns, row)))
+
+            # index each row, put into vector store index
+            # TODO: CHECK THIS LINE: metadata
+            nodes = [
+                TextNode(text=str(t), 
+                         metadata=dict(zip(columns, 
+                                           #check rows types
+                                           [str(value) if isinstance(value, datetime) else value 
+                                            for value in t]
+                                           ))) 
+                for t in row_tups]
+
+            # put into vector store index (use OpenAIEmbeddings by default)
+            index = VectorStoreIndex(nodes) #service_context=service_context
+
+            # save index
+            index.set_index_id("vector_index")
+            index.storage_context.persist(f"{table_index_dir}/{table_name}")
+        else:
+            print('index already exists')
+            # rebuild storage context
+            storage_context = StorageContext.from_defaults(
+                persist_dir=f"{table_index_dir}/{table_name}"
+            )
+            # load index
+            index = load_index_from_storage(
+                storage_context, index_id="vector_index") #service_context=service_context
+            
+        vector_index_dict[table_name] = index
+
+    return vector_index_dict
+
+vector_index_dict = index_all_tables(sql_database)
 
 class InitializeEvent(Event):
     pass
@@ -35,39 +193,103 @@ class ConciergeEvent(Event):
 class OrchestratorEvent(Event):
     request: str
 
-class StockLookupEvent(Event):
+class OrderCreationEvent(Event):
     request: str
 
-class AuthenticateEvent(Event):
-    request: str
+chat_history = []
 
-class AccountBalanceEvent(Event):
-    request: str
+class Product(BaseModel):
+    ID_PRODUCTO: int = Field(..., strict=True, title="Product ID found in the database")
+    TIPO: Literal['ESTANDAR', 'INTENSO', 'PIEDRA GRANITO'] = Field(..., title="Type of the color, each color has a corresponding type in the database")
+    COLOR: str = Field(..., strict=True, title="Color of the product (TYPE GOES IN THE OTHER FIELD), in the database it is a foreign key")
+    CANTIDAD: int = Field(..., strict=True, title="Quantity")
 
-class TransferMoneyEvent(Event):
-    request: str
+class Order(BaseModel):
+    ID_CLIENTE: int = Field(..., strict=True, title="Customer ID found in the database")
+    TIPO_DE_ENTREGA: Literal['CLIENTE', 'RETIRA EN FÁBRICA', 'OTRO']
+    DIRECCION: Optional[str] = Field(..., strict=True, title="Delivery Address, if deliver_type is CLIENTE or RETIRA EN FABRICA is not required, else it is")
+    METODO_DE_PAGO: Literal["EFECTIVO", 'DÓLARES', 'MERCADO PAGO', 'CHEQUE', 'TRANSFERENCIA BANCARIA']
+    NOTA: Optional[str] = Field(None, strict=True, title="Note only used if explicitly specified")
+    # products: List[Product]
 
-class ConciergeWorkflow(Workflow):
+class OrderAndProductList(BaseModel):
+    order: Order
+    product_list: List[Product]
+
+def appsheet_add(rows: List[Dict] | Dict, table_name: str):
+    print(Fore.RED + "[appsheet_add] is being executed" + Style.RESET_ALL)
+
+    if isinstance(rows, dict):
+        rows = [rows]
+
+    products_url = f"https://api.appsheet.com/api/v2/apps/{appsheet_app_id}/tables/{table_name}/Action"
+
+    headers = {
+        "Content-Type": "application/json",
+        "ApplicationAccessKey": appsheet_api_key
+    }
+
+    request = {
+        "Action": "Add",
+        "Properties": {"Locale": "en-US"},
+        "Rows": rows
+    }
+
+    response = requests.post(products_url, headers=headers, json=request)
+    return response
+
+def appsheet_edit(rows: List[Dict] | Dict, table_name: str):
+    print(Fore.RED + "[appsheet_edit] is being executed" + Style.RESET_ALL)
+
+    if isinstance(rows, dict):
+        rows = [rows]
+
+    products_url = f"https://api.appsheet.com/api/v2/apps/{appsheet_app_id}/tables/{table_name}/Action"
+
+    headers = {
+        "Content-Type": "application/json",
+        "ApplicationAccessKey": appsheet_api_key
+    }
+
+    request = {
+        "Action": "Edit",
+        "Properties": {"Locale": "en-US"},
+        "Rows": rows
+    }
+
+    print(request)
+
+    response = requests.post(products_url, headers=headers, json=request)
+    return response
+
+
+class OrderWorkflow(Workflow):
 
     @step(pass_context=True)
     async def initialize(self, ctx: Context, ev: InitializeEvent) -> ConciergeEvent:
+
         ctx.data["user"] = {
             "username": None,
-            "session_token": None,
-            "account_id": None,
-            "account_balance": None,
+            #"session_token": None,
+            #"account_id": None,
+            #"account_balance": None,
         }
         ctx.data["success"] = None
         ctx.data["redirecting"] = None
         ctx.data["overall_request"] = None
+        ctx.data["order"] = {}
+        ctx.data["order"]["products"] = []
 
-        ctx.data["llm"] = OpenAI(model="gpt-4o-mini",temperature=0.4)
-        #ctx.data["llm"] = Anthropic(model="claude-3-5-sonnet-20240620",temperature=0.4)
-        #ctx.data["llm"] = Anthropic(model="claude-3-opus-20240229",temperature=0.4)
+        # Print the contents of ctx.data for debugging
+        print("ctx.data:", ctx.data)
+
+        ctx.data["llm"] = OpenAIIndex(model="gpt-4o-mini",temperature=0)
         return ConciergeEvent()
   
     @step(pass_context=True)
     async def concierge(self, ctx: Context, ev: ConciergeEvent | StartEvent) -> InitializeEvent | StopEvent | OrchestratorEvent:
+        
+        response = None
         
         # initialize user if not already done
         if ("user" not in ctx.data):
@@ -76,15 +298,14 @@ class ConciergeWorkflow(Workflow):
         # initialize concierge if not already done
         if ("concierge" not in ctx.data):
             system_prompt = (f"""
-                You are a helpful assistant that is helping a user navigate a financial system.
-                Your job is to ask the user questions to figure out what they want to do, and give them the available things they can do.
-                That includes
-                * looking up a stock price            
-                * authenticating the user
-                * checking an account balance
-                * transferring money between accounts
-                You should start by listing the things you can help them do.            
-            """)
+                Usa el idioma español (argentina).             
+                Sos un asistente útil que ayuda a un empleado a manejar el software de su empresa, usa el idioma español (argentina).
+                Tu trabajo es hacerle preguntas al empleado para entender qué quiere hacer y brindarle las acciones disponibles que puede hacer.
+                Eso incluye 
+                             * crear un nuevo pedido de productos a un cliente en el sistema
+                             * crear un nuevo cliente 
+                Cuando el usuario termine con su primer tarea, recuerdale el resto de tareas que podés hacer
+                             """)
 
             agent_worker = FunctionCallingAgentWorker.from_tools(
                 tools=[],
@@ -92,7 +313,8 @@ class ConciergeWorkflow(Workflow):
                 allow_parallel_tool_calls=False,
                 system_prompt=system_prompt
             )
-            ctx.data["concierge"] = agent_worker.as_agent()        
+            ctx.data["concierge"] = agent_worker.as_agent()  
+
 
         concierge = ctx.data["concierge"]
         if ctx.data["overall_request"] is not None:
@@ -102,55 +324,46 @@ class ConciergeWorkflow(Workflow):
             return OrchestratorEvent(request=last_request)
         elif (ev.just_completed is not None):
             response = concierge.chat(f"FYI, the user has just completed the task: {ev.just_completed}")
+            chat_history.append(ChatMessage(role=MessageRole.ASSISTANT, content=str(response)))
         elif (ev.need_help):
             print("The previous process needs help with ", ev.request)
             return OrchestratorEvent(request=ev.request)
-        else:
-            # first time experience
-            response = concierge.chat("Hello!")
-
-        print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
-
-        # send message to user using whatsapp api
-        await send_message_to_user(message=str(response), to='5491131500591')
+        elif (ev.request is not None):
+            response = concierge.chat(ev.request)
+            chat_history.append(ChatMessage(role=MessageRole.ASSISTANT, content=str(response)))
+        
+        if response is not None: 
+            print(Fore.MAGENTA + "concierge!!!!" + Style.RESET_ALL)
+            print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
+  
+            # send message to user using whatsapp api
+            await send_message_to_user(message=str(response), to='5491131500591')
 
         #user_msg_str = input("> ").strip()
         user_msg_str = await user_input.get()
+        if user_msg_str == "":
+            print("User has stopped the system with ''")
+            return StopEvent()
+        chat_history.append(ChatMessage(role=MessageRole.USER, content=user_msg_str))
         return OrchestratorEvent(request=user_msg_str)
     
     @step(pass_context=True)
-    async def orchestrator(self, ctx: Context, ev: OrchestratorEvent) -> ConciergeEvent | StockLookupEvent | AuthenticateEvent | AccountBalanceEvent | TransferMoneyEvent | StopEvent:
+    async def orchestrator(self, ctx: Context, ev: OrchestratorEvent) -> ConciergeEvent | OrderCreationEvent | StopEvent:
 
-        print(f"Orchestrator received request: {ev.request}")
+        #print(f"Orchestrator received request: {ev.request}")
 
-        def emit_stock_lookup() -> bool:
-            """Call this if the user wants to look up a stock price."""      
-            print("__emitted: stock lookup")      
-            ctx.session.send_event(StockLookupEvent(request=ev.request))
-            return True
-
-        def emit_authenticate() -> bool:
-            """Call this if the user wants to authenticate"""
-            print("__emitted: authenticate")
-            ctx.session.send_event(AuthenticateEvent(request=ev.request))
-            return True
-
-        def emit_account_balance() -> bool:
-            """Call this if the user wants to check an account balance."""
-            print("__emitted: account balance")
-            ctx.session.send_event(AccountBalanceEvent(request=ev.request))
-            return True
-
-        def emit_transfer_money() -> bool:
-            """Call this if the user wants to transfer money."""
-            print("__emitted: transfer money")
-            ctx.session.send_event(TransferMoneyEvent(request=ev.request))
+        def emit_order_creation() -> bool:
+            """Call this if the user wants create a new order in the system."""      
+            print("__emitted: order creation")      
+            ctx.session.send_event(OrderCreationEvent(request=ev.request))
             return True
 
         def emit_concierge() -> bool:
             """Call this if the user wants to do something else or you can't figure out what they want to do."""
-            print("__emitted: concierge")
-            ctx.session.send_event(ConciergeEvent(request=ev.request))
+            print("__emitted: concierge (non stop)")
+            #ctx.session.send_event(ConciergeEvent(request=("This is the request, the orchestator didn't know how to continue: "+ev.request)))
+            #ctx.session.send_event(StopEvent())
+            self.send_event(ConciergeEvent(request=ev.request))
             return True
 
         def emit_stop() -> bool:
@@ -158,258 +371,299 @@ class ConciergeWorkflow(Workflow):
             print("__emitted: stop")
             ctx.session.send_event(StopEvent())
             return True
+        
+        # define tool for getting customer data
+        def getCustomerData(customer_name: str) -> str:
+            """Returns the customer metadata from the customer name given by the user to send that value to the system later"""
+            print("__emitted: getCustomerData")
+            test_retriever = vector_index_dict["CLIENTES"].as_retriever(similarity_top_k=1)
+            nodes =  test_retriever.retrieve(customer_name)
+            if nodes[0].metadata is None:
+                print("No customer found")
+                ctx.session.send_event(StopEvent())
+            print(f"For customer {customer_name} found:", 
+                  nodes[0].metadata["CLIENTE"], nodes[0].metadata["ID"])
+            return str(nodes[0].metadata)
 
         tools = [
-            FunctionTool.from_defaults(fn=emit_stock_lookup),
-            FunctionTool.from_defaults(fn=emit_authenticate),
-            FunctionTool.from_defaults(fn=emit_account_balance),
-            FunctionTool.from_defaults(fn=emit_transfer_money),
+            FunctionTool.from_defaults(fn=emit_order_creation),
             FunctionTool.from_defaults(fn=emit_concierge),
-            FunctionTool.from_defaults(fn=emit_stop)
+            FunctionTool.from_defaults(fn=emit_stop),
+            FunctionTool.from_defaults(fn=getCustomerData)
         ]
         
         system_prompt = (f"""
             You are on orchestration agent.
             Your job is to decide which agent to run based on the current state of the user and what they've asked to do. 
             You run an agent by calling the appropriate tool for that agent.
-            YOU DO NOT HAVE to call more than one tool.
-            You do not need to figure out dependencies between agents; the agents will handle that themselves.
-                            
-            If you did not call any tools, return the string "FAILED" with and the exact copy of the issue you are facing calling the tools.
+            in your response, only select the tool, don't add any text into it.      
+            If there's no clear use for one of the tools, call the tool "concierge" to signal that the concierge agent should help, 
+            UNLESS THERE'S AN ERROR, YOU ALWAYS HAVE TO CALL ONE OF THE TOOLS, if you don't call any tool, the system will break.
+            If you NOTICE SOMETHING IS NOT WORKING or did not call any tools, return the string "FAILED" followed by the exact reason you are selecting this option.
         """)
 
+        """when you call the concierge, also send information to help the concierge answer the user request, as you have more information than him 
+                         (your reply will directly sent to the concierge, the user won't read it)."""
+        
         agent_worker = FunctionCallingAgentWorker.from_tools(
             tools=tools,
             llm=ctx.data["llm"],
             allow_parallel_tool_calls=False,
-            system_prompt=system_prompt
+            system_prompt=system_prompt,
+            verbose=True
         )
-        ctx.data["orchestrator"] = agent_worker.as_agent()        
-        
+        ctx.data["orchestrator"] = agent_worker.as_agent()
+
         orchestrator = ctx.data["orchestrator"]
         response = str(orchestrator.chat(ev.request))
+        print(Fore.MAGENTA + "Orchestrator: " +response + Style.RESET_ALL)
+        #chat_history.append(ChatMessage(role=MessageRole.ASSISTANT, content=("Información del orquestador: "+str(response))))
 
         if "FAILED" in response:
             print(Fore.RED + response + Style.RESET_ALL)
-            return OrchestratorEvent(request=ev.request)
+            return StopEvent()
+            #return OrchestratorEvent(request=ev.request)       
         
     @step(pass_context=True)
-    async def stock_lookup(self, ctx: Context, ev: StockLookupEvent) -> ConciergeEvent:
+    async def order_creator(self, ctx: Context, ev: OrderCreationEvent) -> ConciergeEvent | StopEvent:
 
-        print(f"Stock lookup received request: {ev.request}")
+        if("order_creator_agent" not in ctx.data):
 
-        if ("stock_lookup_agent" not in ctx.data):
-            def lookup_stock_price(stock_symbol: str) -> str:
-                """Useful for looking up a stock price."""
-                print(f"Looking up stock price for {stock_symbol}")
-                return f"Symbol {stock_symbol} is currently trading at $100.00"
-            
-            def search_for_stock_symbol(str: str) -> str:
-                """Useful for searching for a stock symbol given a free-form company name."""
-                print("Searching for stock symbol")
-                return str.upper()
-            
-            system_prompt = (f"""
-                You are a helpful assistant that is looking up stock prices.
-                The user may not know the stock symbol of the company they're interested in,
-                so you can help them look it up by the name of the company.
-                You can only look up stock symbols given to you by the search_for_stock_symbol tool, don't make them up. Trust the output of the search_for_stock_symbol tool even if it doesn't make sense to you.
-                Once you have retrieved a stock price, you *must* call the tool named "done" to signal that you are done. Do this before you respond.
-                If the user asks to do anything other than look up a stock symbol or price, call the tool "need_help" to signal some other agent should help.
-            """)
+            def send_order():
+                """Useful for sending the order to the system via API request, Order will be stored in the session context. 
+                Make sure to call the other tools to get the IDs before, and that you have all the data needed."""
 
-            ctx.data["stock_lookup_agent"] = ConciergeAgent(
-                name="Stock Lookup Agent",
-                parent=self,
-                tools=[lookup_stock_price, search_for_stock_symbol],
-                context=ctx,
-                system_prompt=system_prompt,
-                trigger_event=StockLookupEvent
-            )
-
-        return await ctx.data["stock_lookup_agent"].handle_event(ev)
-
-    @step(pass_context=True)
-    async def authenticate(self, ctx: Context, ev: AuthenticateEvent) -> ConciergeEvent:
-
-        if ("authentication_agent" not in ctx.data):
-            def store_username(username: str) -> None:
-                """Adds the username to the user state."""
-                print("Recording username")
-                ctx.data["user"]["username"] = username
-
-            def login(password: str) -> None:
-                """Given a password, logs in and stores a session token in the user state."""
-                print(f"Logging in {ctx.data['user']['username']}")
-                # todo: actually check the password
-                session_token = "output_of_login_function_goes_here"
-                ctx.data["user"]["session_token"] = session_token
-            
-            def is_authenticated() -> bool:
-                """Checks if the user has a session token."""
-                print("Checking if authenticated")
-                if ctx.data["user"]["session_token"] is not None:
-                    return True
-
-            system_prompt = (f"""
-                You are a helpful assistant that is authenticating a user.
-                Your task is to get a valid session token stored in the user state.
-                To do this, the user must supply you with a username and a valid password. You can ask them to supply these.
-                If the user supplies a username and password, call the tool "login" to log them in.
-                Once you've called the login tool successfully, call the tool named "done" to signal that you are done. Do this before you respond.
-                If the user asks to do anything other than authenticate, instead of calling the tool need_help, send the user the exact description of why you need help, this is for debugging porpuses.
-            """) #If the user asks to do anything other than authenticate, call the tool "need_help" to signal some other agent should help.
-
-            ctx.data["authentication_agent"] = ConciergeAgent(
-                name="Authentication Agent",
-                parent=self,
-                tools=[store_username, login, is_authenticated],
-                context=ctx,
-                system_prompt=system_prompt,
-                trigger_event=AuthenticateEvent
-            )
-
-        return await ctx.data["authentication_agent"].handle_event(ev)
-    
-    @step(pass_context=True)
-    async def account_balance(self, ctx: Context, ev: AccountBalanceEvent) -> AuthenticateEvent | ConciergeEvent:
-        
-        if("account_balance_agent" not in ctx.data):
-            def get_account_id(account_name: str) -> str:
-                """Useful for looking up an account ID."""
-                print(f"Looking up account ID for {account_name}")
-                account_id = "1234567890"
-                ctx.data["user"]["account_id"] = account_id
-                return f"Account id is {account_id}"
-            
-            def get_account_balance(account_id: str) -> str:
-                """Useful for looking up an account balance."""
-                print(f"Looking up account balance for {account_id}")
-                ctx.data["user"]["account_balance"] = 1000
-                return f"Account {account_id} has a balance of ${ctx.data['user']['account_balance']}"
-            
-            def is_authenticated() -> bool:
-                """Checks if the user is authenticated."""
-                print("Account balance agent is checking if authenticated")
-                if ctx.data["user"]["session_token"] is not None:
-                    return True
-                else:
-                    return False
+                prompt = """
+                You will be provided with data about an order, but you only have to list its products to inser in a database.
+                Your goal will be to parse the data following the schema provided.
+                Here is a description of the parameters:
+                - product: specifies product_id, product type, color, and quantity
+                - order: general data about the order, and it has a list of products that the user will list
+                If the user asks for something you can't help with, just use the tool "help" to signal the concierge agent should help.
+                """
                 
-            def authenticate() -> None:
-                """Call this if the user needs to authenticate."""
-                print("Account balance agent is authenticating")
-                ctx.data["redirecting"] = True
-                ctx.data["overall_request"] = "Check account balance"
-                ctx.session.send_event(AuthenticateEvent(request="Authenticate"))
+                response = client.beta.chat.completions.parse(
+                    model=MODEL,
+                    temperature=0,
+                    messages=[
+                        {"role": "system", "content": prompt},
+                        {"role": "user", "content": str(ctx.data["order"])}
+                    ],
+                    response_format=OrderAndProductList
+                )
+                print(json.loads(response.choices[0].message.content))
 
+                products = json.loads(response.choices[0].message.content)["product_list"]
+                order = json.loads(response.choices[0].message.content)["order"]
+
+                response = appsheet_add([order], "PEDIDOS")
+
+                if isinstance(response, requests.Response) and response.status_code != 200:
+                    print(f"Error inserting order: {response.text}")
+                    return f"Error inserting order, stop the system"
+                elif response.status_code == 200 and response.json().get('Rows'):
+
+                    print(f"Order inserted successfully, inserting products now", response.json().get('Rows'))
+
+                    order = response.json().get('Rows')[0]
+
+                    for product in products:
+                        product["ID_PEDIDO"] = order["ID_KEY"]
+
+                    response = appsheet_add(products, "PRODUCTOS PEDIDOS")
+
+                    if isinstance(response, requests.Response) and response.status_code != 200:
+                        print(f"Error inserting order: {response.text}")
+                        return f"Error inserting products, stop the system"
+                    elif response.status_code == 200 and response.json().get('Rows'):
+
+                        response = appsheet_edit({"ID_KEY": order["ID_KEY"], "GUARDADO": 1}, "PEDIDOS")
+                        if isinstance(response, requests.Response) and response.status_code == 200:
+                            print(f"Products. Order inserted successfully", response.json().get('Rows'))
+                            return f"Order and products created succesfully"
+                        
+                        else:
+                            print(f"Products. Error in the request body or url, check the settings")
+                            return f"Error in the request body or url, check the settings, stop the system"
+                    else:
+                        print(f"Products. Error in the request body or url, check the settings")
+                        return f"Error in the request body or url, check the settings, stop the system"
+      
+                else:
+                    print(f"Order. Error in the request body or url, check the settings")
+                    return f"Error in the request body or url, check the settings, stop the system"
+
+            def createOrder(customer_name:str, payment_method:str, shipment_type_and_info:str, shipment_adress:Optional[str] = "", nota:Optional[str] = "") -> str:
+                """Creates an order in the session, it will be used to store the order data before sending it to the system. 
+                Don't use it before having the needed data"""
+
+                ctx.data["order"]["ID_CLIENTE"] = getCustomerID(customer_name)
+                ctx.data["order"]["TIPO_DE_ENTREGA"] = shipment_type_and_info
+                ctx.data["order"]["DIRECCION"] = shipment_adress
+                ctx.data["order"]["METODO_DE_PAGO"] = payment_method
+                ctx.data["order"]["NOTA"] = nota
+                print("Order created:",  str(ctx.data["order"]))
+
+                return "Order created successfully, make sure to add products before sending it to the system"
+            
+            def getCustomerID(customer_name: str) -> str:
+                """Returns the customer ID from the customer name given by the user to send that value to the system later"""
+                test_retriever = vector_index_dict["CLIENTES"].as_retriever(similarity_top_k=1)
+                nodes =  test_retriever.retrieve(customer_name)
+                print(f"For customer {customer_name} found:", 
+                      nodes[0].metadata["CLIENTE"]), nodes[0].metadata["ID"]
+                if nodes[0].metadata is None:
+                    print("No customer found")
+                    ctx.session.send_event(StopEvent())
+                return nodes[0].metadata["ID"]
+            
+            #DNI/CUIT
+            def getCustomerCUIT(customer_name: str) -> str:
+                """Returns the CUIT of the customer from the customer name given by the user to send that value to the system later"""
+                test_retriever = vector_index_dict["CLIENTES"].as_retriever(similarity_top_k=1)
+                nodes =  test_retriever.retrieve(customer_name)
+                print(f"For customer {customer_name} found:", 
+                      nodes[0].metadata["CLIENTE"]), nodes[0].metadata["DNI/CUIT"]
+                if nodes[0].metadata is None:
+                    print("No customer found")
+                    ctx.session.send_event(StopEvent())
+                return nodes[0].metadata["DNI/CUIT"]
+            
+            def addProductSToOrder(products:List[Tuple[str, str, int]]) -> str:
+                """Adds a list of products to the order in the session, each tuple in the list has three values:
+                product_name is the name of the product (not the color), color description (with its type if the user provided it), and quantity.
+                Make sure to add all the products."""
+                for product in products:
+                    addProductToOrder(product[0], product[1], product[2])
+                return "Products added to the order, make sure that all the products where added, and to add other order info. Don't forget to send it to the system when all the data is loaded"
+            
+            def addProductToOrder(product_name:str, color_description:str, quantity:int):
+                """Adds a product to the order in the current session, product_name is the name of the product (not the color), color description (with its type if the user provided it), and quantity.
+                Make sure to add all the products using this tool."""
+                
+                color_tuple = getColorName(color_description)
+                product = {
+                    "CANTIDAD": quantity, 
+                    "ID_PRODUCTO": getProductID(product_name), 
+                    "COLOR": color_tuple[0], 
+                    "TIPO": color_tuple[1]
+                    }
+                ctx.data["order"]["products"].append(product)
+                print(f"Product added to the order: {product}")
+
+                return "Product added to the order, make sure that all the products are added, and to load other order info too. Don't forget to send it to the system when all the data is loaded"
+            
+            def getProductID(product_description_name: str) -> str:
+                """Returns the product ID from the product name given by the user to send that value to the system later"""
+                test_retriever = vector_index_dict["PRODUCTOS"].as_retriever(similarity_top_k=1)
+                nodes = test_retriever.retrieve(product_description_name)
+                """ result = []
+
+                if nodes[0].get_score() > 0.5:
+                    result.append(nodes[0].metadata)
+                if nodes[1].get_score() > 0.5:
+                    result.append(nodes[1].metadata)
+                if nodes[2].get_score() > 0.5:
+                    result.append(nodes[2].metadata)
+                if len(result) == 0:
+                    print("No product found")
+                    #ctx.session.send_event(StopEvent())
+                    return "No product found, ask the user for more details about the product"
+                
+                for node in nodes:
+                    print(node.metadata["PRODUCTO"], node.get_score()) """
+
+                print(f"For product {product_description_name} found:", nodes[0].metadata["PRODUCTO"], nodes[0].metadata["ID"])
+                if nodes[0].metadata is None:
+                    print("No product found")
+                    ctx.session.send_event(StopEvent())
+                return nodes[0].metadata["ID"]
+            
+            def getColorName(color_description: str) -> Tuple[str, str]:
+                """Returns the Color exact name with its corresponding type from the color given by the user to send that value to the system later"""
+                test_retriever = vector_index_dict["COLORES"].as_retriever(similarity_top_k=1)
+                nodes = test_retriever.retrieve(color_description)
+                """ result = []
+
+                if nodes[0].get_score() > 0.5:
+                    result.append(nodes[0].metadata)
+                if nodes[1].get_score() > 0.5:
+                    result.append(nodes[1].metadata)
+                if nodes[2].get_score() > 0.5:
+                    result.append(nodes[2].metadata)
+                if len(result) == 0:
+                    print("No product found")
+                    #ctx.session.send_event(StopEvent())
+                    return "No product found, ask the user for more details about the product"
+                
+                for node in nodes:
+                    print(node.metadata["PRODUCTO"], node.get_score()) """
+
+                print(f"For color {color_description} found:", nodes[0].metadata["COLOR"], nodes[0].metadata["TIPO"])
+                if nodes[0].metadata is None:
+                    print("No color found")
+                    ctx.session.send_event(StopEvent())
+                return nodes[0].metadata["COLOR"], nodes[0].metadata["TIPO"]
+            
+            def stop() -> None:
+                """Call this if you notice that something is not working propperly."""
+                print("Order creator agent is stopping")
+                ctx.session.send_event(StopEvent())
+            
             system_prompt = (f"""
-                You are a helpful assistant that is looking up account balances.
-                The user may not know the account ID of the account they're interested in,
-                so you can help them look it up by the name of the account.
-                The user can only do this if they are authenticated, which you can check with the is_authenticated tool.
-                If they aren't authenticated, call the "authenticate" tool to trigger the start of the authentication process; tell them you have done this.
-                If they're trying to transfer money, they have to check their account balance first, which you can help with.
-                Once you have supplied an account balance, you must call the tool named "done" to signal that you are done. Do this before you respond.
-                If the user asks to do anything other than look up an account balance, call the tool "need_help" to signal some other agent should help.
-            """)
+                
+                Usa el idioma español (argentina).
+                You are a helpful assistant that recollects data to create an order correctly in the system by sending an API request.
+                This is the ORDER structure:
+                            {str(Product)}
+                            {str(Order)}
+                
+                You should use the "createOrder" and "addProductToOrder" for all the products to correctly create the order. 
+                    
+                Once you have loaded all the data, call the "send_order" tool and it will send the order to the system taken the data you have just loaded.
+                if you don't send the order, you'll break the system
+                """)
 
-            ctx.data["account_balance_agent"] = ConciergeAgent(
-                name="Account Balance Agent",
+            """Once you have both IDs, use the "send_order" tool.
+            If you can see that some data is not provided, ask the user for that particular info.
+            Once you have all the data, you can call the tool named "send_order" to send the order to the system.
+            If you send the info and it fails, check if you still need more data for the user, or if you can figure out what was wrong in the previous request.
+            Once you have created the order succesfully, you can call the tool named "done" to signal that you are done, don't respond before doing this.
+            If the user asks to do anything other than creating an order, call the tool "help" to signal some other agent should help.
+            IMPORTANT: If you notice that something is not working properly, call the tool "stop" to stop the agent.
+            FIRST USE THE TOOL "explain_steps" TO EXPLAIN THE STEPS YOU'LL TAKE TO CREATE THE ORDER, 
+                LISTING ALL THE STEPS EACH ONE IN A SHORT SENTENCE. DO NOT CALL ANY OTHER TOOL BEFORE THIS ONE."""
+            """If any of those tools return more than one item, ask the user to select which is the right one by showing him the retrieved names
+                        once you confirm the data, finish by sending the order
+                    If no items are returned, ask the user for more information about the product or the customer"""
+            #{json.dumps(Order.model_json_schema(), indent=2)}
+                
+            ctx.data["create_order_agent"] = ConciergeAgent(
+                name="Create Order Agent",
                 parent=self,
-                tools=[get_account_id, get_account_balance, is_authenticated, authenticate],
+                tools=[send_order, stop, addProductToOrder, createOrder, getCustomerCUIT, emit_concierge],
                 context=ctx,
                 system_prompt=system_prompt,
-                trigger_event=AccountBalanceEvent
+                trigger_event=OrderCreationEvent
             )
 
-        # TODO: this could programmatically check for authentication and emit an event
-        # but then the agent wouldn't say anything helpful about what's going on.
-
-        return await ctx.data["account_balance_agent"].handle_event(ev)
-    
-    @step(pass_context=True)
-    async def transfer_money(self, ctx: Context, ev: TransferMoneyEvent) -> AuthenticateEvent | AccountBalanceEvent | ConciergeEvent:
-
-        if("transfer_money_agent" not in ctx.data):
-            def transfer_money(from_account_id: str, to_account_id: str, amount: int) -> None:
-                """Useful for transferring money between accounts."""
-                print(f"Transferring {amount} from {from_account_id} account {to_account_id}")
-                return f"Transferred {amount} to account {to_account_id}"
-            
-            def balance_sufficient(account_id: str, amount: int) -> bool:
-                """Useful for checking if an account has enough money to transfer."""
-                # todo: actually check they've selected the right account ID
-                print("Checking if balance is sufficient")
-                if ctx.data["user"]['account_balance'] >= amount:
-                    return True
-                
-            def has_balance() -> bool:
-                """Useful for checking if an account has a balance."""
-                print("Checking if account has a balance")
-                if ctx.data["user"]["account_balance"] is not None and ctx.data["user"]["account_balance"] > 0:
-                    print("It does", ctx.data["user"]["account_balance"])
-                    return True
-                else:
-                    return False
-            
-            def is_authenticated() -> bool:
-                """Checks if the user has a session token."""
-                print("Transfer money agent is checking if authenticated")
-                if ctx.data["user"]["session_token"] is not None:
-                    return True
-                else:
-                    return False
-                
-            def authenticate() -> None:
-                """Call this if the user needs to authenticate."""
-                print("Account balance agent is authenticating")
-                ctx.data["redirecting"] = True
-                ctx.data["overall_request"] = "Transfer money"
-                ctx.session.send_event(AuthenticateEvent(request="Authenticate"))
-
-            def check_balance() -> None:
-                """Call this if the user needs to check their account balance."""
-                print("Transfer money agent is checking balance")
-                ctx.data["redirecting"] = True
-                ctx.data["overall_request"] = "Transfer money"
-                ctx.session.send_event(AccountBalanceEvent(request="Check balance"))
-            
-            system_prompt = (f"""
-                You are a helpful assistant that transfers money between accounts.
-                The user can only do this if they are authenticated, which you can check with the is_authenticated tool.
-                If they aren't authenticated, tell them to authenticate first.
-                The user must also have looked up their account balance already, which you can check with the has_balance tool.
-                If they haven't already, tell them to look up their account balance first.
-                Once you have transferred the money, you can call the tool named "done" to signal that you are done. Do this before you respond.
-                If the user asks to do anything other than transfer money, call the tool "done" to signal some other agent should help.
-            """)
-
-            ctx.data["transfer_money_agent"] = ConciergeAgent(
-                name="Transfer Money Agent",
-                parent=self,
-                tools=[transfer_money, balance_sufficient, has_balance, is_authenticated, authenticate, check_balance],
-                context=ctx,
-                system_prompt=system_prompt,
-                trigger_event=TransferMoneyEvent
-            )
-
-        return await ctx.data["transfer_money_agent"].handle_event(ev)
+        return await ctx.data["create_order_agent"].handle_event(ev)
 
 class ConciergeAgent():
     name: str
     parent: Workflow
-    tools: list[FunctionTool]
+    tools: List[FunctionTool]
     system_prompt: str
     context: Context
     current_event: Event
     trigger_event: Event
+    chat_history: List[ChatMessage]
 
     def __init__(
             self,
             parent: Workflow,
-            tools: List[Callable], 
-            system_prompt: str, 
+            tools: List[Callable],
+            system_prompt: str,
             trigger_event: Event,
             context: Context,
             name: str,
@@ -420,19 +674,22 @@ class ConciergeAgent():
         self.system_prompt = system_prompt
         self.context.data["redirecting"] = False
         self.trigger_event = trigger_event
+        self.chat_history = []
 
-        # set up the tools including the ones everybody gets
+        # Set up the tools including the ones everybody gets
         def done() -> None:
             """When you complete your task, call this tool."""
             print(f"{self.name} is complete")
             self.context.data["redirecting"] = True
-            context.session.send_event(ConciergeEvent(just_completed=self.name))
+            self.context.session.send_event(ConciergeEvent(just_completed=self.name))
 
         def need_help() -> None:
-            """If the user asks to do something you don't know how to do, call this."""
+            """If you need assistance, call this tool."""
             print(f"{self.name} needs help")
             self.context.data["redirecting"] = True
-            context.session.send_event(ConciergeEvent(request=self.current_event.request,need_help=True))
+            self.context.session.send_event(
+                ConciergeEvent(request=self.current_event.request, need_help=True)
+            )
 
         self.tools = [
             FunctionTool.from_defaults(fn=done),
@@ -452,8 +709,9 @@ class ConciergeAgent():
     async def handle_event(self, ev: Event):
         self.current_event = ev
 
-        response = str(self.agent.chat(ev.request))
-        print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
+        response = str(self.agent.chat(ev.request, chat_history=chat_history))
+        chat_history.append(ChatMessage(role=MessageRole.ASSISTANT, content=str(response)))
+        print(Fore.MAGENTA+"AGENT: " +str(response) + Style.RESET_ALL)
 
         # send message to user using whatsapp api
         await send_message_to_user(message=str(response), to='5491131500591')
@@ -471,7 +729,7 @@ class ConciergeAgent():
 #draw_all_possible_flows(ConciergeWorkflow,filename="concierge_flows.html")
 
 async def main():
-    c = ConciergeWorkflow(timeout=1200, verbose=True)
+    c = OrderWorkflow(timeout=1200, verbose=True)
     result = await c.run()
     print(result)
 

@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from colorama import Fore, Style
-from chatbot.workflows import ConciergeWorkflow, user_input
+from chatbot.workflows import OrderWorkflow, user_input
 import asyncio
 import threading
 import logging
@@ -23,7 +23,7 @@ logging.getLogger('requests').setLevel(logging.WARNING)
 async def run_workflow():
     try:
         # Create and run the workflow instance
-        workflow = ConciergeWorkflow(timeout=600, verbose=True)
+        workflow = OrderWorkflow(timeout=600, verbose=True)
         logging.debug('Workflow instance created.')
 
         while True:  # Run continuously to handle multiple inputs
@@ -61,4 +61,4 @@ if __name__ == "__main__":
     asyncio.run_coroutine_threadsafe(run_workflow(), loop)
 
     # Start the Flask server
-    app.run(port=5000, debug=False)  # Use debug=True for development environment
+    app.run(port=5000, debug=True)  # Use debug=True for development environment
