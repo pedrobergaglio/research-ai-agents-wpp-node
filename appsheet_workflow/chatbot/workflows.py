@@ -1,4 +1,5 @@
 from api.utils import send_message_to_user
+from prompts import Prompts
 
 import requests
 from typing import List, Optional, Literal
@@ -297,16 +298,7 @@ class OrderWorkflow(Workflow):
         
         # initialize concierge if not already done
         if ("concierge" not in ctx.data):
-            system_prompt = (f"""
-                Usa el idioma español (argentina).             
-                Sos un asistente útil que ayuda a un empleado a manejar el software de su empresa, usa el idioma español (argentina).
-                Tu trabajo es hacerle preguntas al empleado para entender qué quiere hacer y brindarle las acciones disponibles que puede hacer.
-                Eso incluye 
-                             * crear un nuevo pedido de productos a un cliente en el sistema
-                             * crear un nuevo cliente 
-                Cuando el usuario termine con su primer tarea, recuerdale el resto de tareas que podés hacer
-                             """)
-
+            system_prompt = Prompts.concierge
             agent_worker = FunctionCallingAgentWorker.from_tools(
                 tools=[],
                 llm=ctx.data["llm"],
@@ -392,15 +384,7 @@ class OrderWorkflow(Workflow):
             FunctionTool.from_defaults(fn=getCustomerData)
         ]
         
-        system_prompt = (f"""
-            You are on orchestration agent.
-            Your job is to decide which agent to run based on the current state of the user and what they've asked to do. 
-            You run an agent by calling the appropriate tool for that agent.
-            in your response, only select the tool, don't add any text into it.      
-            If there's no clear use for one of the tools, call the tool "concierge" to signal that the concierge agent should help, 
-            UNLESS THERE'S AN ERROR, YOU ALWAYS HAVE TO CALL ONE OF THE TOOLS, if you don't call any tool, the system will break.
-            If you NOTICE SOMETHING IS NOT WORKING or did not call any tools, return the string "FAILED" followed by the exact reason you are selecting this option.
-        """)
+        system_prompt = Prompts.orchestrator
 
         """when you call the concierge, also send information to help the concierge answer the user request, as you have more information than him 
                          (your reply will directly sent to the concierge, the user won't read it)."""
@@ -433,14 +417,7 @@ class OrderWorkflow(Workflow):
                 """Useful for sending the order to the system via API request, Order will be stored in the session context. 
                 Make sure to call the other tools to get the IDs before, and that you have all the data needed."""
 
-                prompt = """
-                You will be provided with data about an order, but you only have to list its products to inser in a database.
-                Your goal will be to parse the data following the schema provided.
-                Here is a description of the parameters:
-                - product: specifies product_id, product type, color, and quantity
-                - order: general data about the order, and it has a list of products that the user will list
-                If the user asks for something you can't help with, just use the tool "help" to signal the concierge agent should help.
-                """
+                prompt = Prompts.send_order
                 
                 response = client.beta.chat.completions.parse(
                     model=MODEL,
@@ -479,8 +456,8 @@ class OrderWorkflow(Workflow):
 
                         response = appsheet_edit({"ID_KEY": order["ID_KEY"], "GUARDADO": 1}, "PEDIDOS")
                         if isinstance(response, requests.Response) and response.status_code == 200:
-                            print(f"Products. Order inserted successfully", response.json().get('Rows'))
-                            return f"Order and products created succesfully"
+                            print(f"Products. Order inserted successfully , Order ID: {order['ID_KEY']}", response.json().get('Rows'))
+                            return f"Order and products created successfully, Order ID: {order['ID_KEY']}"
                         
                         else:
                             print(f"Products. Error in the request body or url, check the settings")
