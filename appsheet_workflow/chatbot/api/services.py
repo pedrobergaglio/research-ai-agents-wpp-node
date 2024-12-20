@@ -11,9 +11,9 @@ workflow = OrderWorkflow(timeout=1200, verbose=True)
 # In-memory store for user workflow states
 user_workflow_states = {}
 
-next_call = OrchestratorEvent
+#next_call = OrchestratorEvent
 
-events = [AuthenticateEvent, StopEvent, OrchestratorEvent]
+#events = [AuthenticateEvent, StopEvent, OrchestratorEvent]
 
 async def handle_user_message(user_id, message):
 

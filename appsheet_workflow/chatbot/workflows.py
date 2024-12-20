@@ -1,203 +1,28 @@
-from api.utils import send_message_to_user
-from prompts import Prompts
-
+from chatbot.custom_prompts import CustomPrompts
 import requests
 from typing import List, Optional, Literal
-from datetime import datetime
-from llama_index.core.query_pipeline import QueryPipeline as QP
-from llama_index.legacy.service_context import ServiceContext
-from llama_index.core import VectorStoreIndex, load_index_from_storage
-from sqlalchemy import text
-from llama_index.core.schema import TextNode
-from llama_index.core.storage import StorageContext
-from pathlib import Path
-from typing import Dict
-from llama_index.core.retrievers import SQLRetriever
 from typing import List
-from llama_index.core.query_pipeline import FnComponent
-
-from llama_index.core.query_pipeline import (
-    QueryPipeline as QP,
-    Link,
-    InputComponent,
-    CustomQueryComponent,
-)
-from llama_index.core.workflow import Workflow
-from pyvis.network import Network
-from llama_index.core.retrievers import SQLRetriever
 from typing import List
-from llama_index.core.query_pipeline import FnComponent
-
-from llama_index.core.prompts.default_prompts import DEFAULT_TEXT_TO_SQL_PROMPT
-from llama_index.core.prompts import PromptTemplate
-from llama_index.core.query_pipeline import FnComponent
-from llama_index.core.llms import ChatResponse
-from llama_index.core.llms import ChatMessage, MessageRole
-import pandas as pd
-
 import json
-import os
-
-# put data into sqlite db
-from sqlalchemy import (
-    create_engine,
-    MetaData,
-    Table,
-    Column,
-    String,
-    Integer,
-)
-import re
-from llama_index.core.objects import (
-    SQLTableNodeMapping,
-    ObjectIndex,
-    SQLTableSchema,
-)
-from llama_index.core import SQLDatabase, VectorStoreIndex
-
-from llama_index.core.query_pipeline import (
-    QueryPipeline as QP,
-    Link,
-    InputComponent,
-    CustomQueryComponent,
-)
 from dotenv import load_dotenv
-
-from llama_index.core.workflow import (
-    step, 
-    Context, 
-    Workflow, 
-    Event, 
-    StartEvent, 
-    StopEvent
-)
-#from llama_index.llms.anthropic import Anthropic
+from llama_index.core.workflow import (step, Context,StopEvent)
 from llama_index.core.agent import FunctionCallingAgentWorker
 from llama_index.core.tools import FunctionTool
-from enum import Enum
-from typing import Optional, List, Callable, Tuple
-from llama_index.utils.workflow import draw_all_possible_flows
+from typing import Optional, List, Tuple
 from colorama import Fore, Back, Style
 import asyncio
-import nest_asyncio
 from pydantic import BaseModel, Field
-from llama_index.llms.openai import OpenAI as OpenAIIndex
 import openai
+from chatbot.events import Events, OrchestratorEvents
+from chatbot.agent_base import ConciergeAgent
+from chatbot.workflows_base import OrderWorkflow, user_input
+from chatbot.data_indexing import vector_index_dict
+from chatbot.utils import appsheet_add, appsheet_edit
 
 load_dotenv()
 
 client = openai.OpenAI()
-MODEL = 'gpt-4o-2024-08-06'
-
-# Get the environment variables
-host = os.getenv('MYSQL_DB_HOST')
-user = os.getenv('MYSQL_DB_USER')
-password = os.getenv('MYSQL_DB_PASSWORD')
-database = os.getenv('MYSQL_SALES_DB_NAME')
-
-appsheet_app_id = os.getenv('APPSHEET_APP_ID')
-appsheet_api_key = os.getenv('APPSHEET_API_KEY')
-
-# Construct the connection string
-connection_string = f"mysql+pymysql://{user}:{password}@{host}/{database}"
-
-# Create the engine
-engine = create_engine(connection_string)
-
-metadata_obj = MetaData()
-sql_database = SQLDatabase(engine)
-table_node_mapping = SQLTableNodeMapping(sql_database)
-sql_retriever = SQLRetriever(sql_database)
-
-# Global queue to handle incoming user inputs asynchronously
-user_input = asyncio.Queue()
-
-def index_all_tables(
-    sql_database: SQLDatabase, table_index_dir: str = "./table_indices"
-) -> Dict[str, VectorStoreIndex]:
-    """Index all tables."""
-
-    table_names = ['CATEGORÍAS CAJA', 'CATEGORÍAS PRODUCTOS', 'CLIENTES', 'COLORES', 'ESTADOS', 'IVA', 'MÉTODOS DE PAGO', 'PERSONAL', 'PRODUCTOS', 'PROVEEDORES']
-    # no indexd: CAJA, CHEQUES, PRODUCTOS PEDIDOS, STOCK, CUENTAS CORRIENTES, PEDIDOS, CONTROL DE PRECIOS
-
-    if not Path(table_index_dir).exists():
-        os.makedirs(table_index_dir)
-
-    vector_index_dict = {}
-    engine = sql_database.engine
-    for table_name in table_names: #sql_database.get_usable_table_names():
-        print(f"Indexing rows in table: {table_name}")
-
-        if not os.path.exists(f"{table_index_dir}/{table_name}"):
-            # get all rows from table
-            with engine.connect() as conn:
-
-                columns_query=(
-                    f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{table_name}'"
-                    f"AND TABLE_SCHEMA = '{database}'"
-                )
-
-                cursor = conn.execute(text(columns_query))
-                result = cursor.fetchall()
-                columns = []
-                for column in result:
-                    columns.append(column[0]) # get the first and only element of the tuple (the name)
-
-                cursor = conn.execute(text(f'SELECT * FROM `{table_name}`'))
-                result = cursor.fetchall()
-                row_tups = []
-                for row in result:
-                    row_tups.append(tuple(row))
-                    #print(dict(zip(columns, row)))
-
-            # index each row, put into vector store index
-            # TODO: CHECK THIS LINE: metadata
-            nodes = [
-                TextNode(text=str(t), 
-                         metadata=dict(zip(columns, 
-                                           #check rows types
-                                           [str(value) if isinstance(value, datetime) else value 
-                                            for value in t]
-                                           ))) 
-                for t in row_tups]
-
-            # put into vector store index (use OpenAIEmbeddings by default)
-            index = VectorStoreIndex(nodes) #service_context=service_context
-
-            # save index
-            index.set_index_id("vector_index")
-            index.storage_context.persist(f"{table_index_dir}/{table_name}")
-        else:
-            print('index already exists')
-            # rebuild storage context
-            storage_context = StorageContext.from_defaults(
-                persist_dir=f"{table_index_dir}/{table_name}"
-            )
-            # load index
-            index = load_index_from_storage(
-                storage_context, index_id="vector_index") #service_context=service_context
-            
-        vector_index_dict[table_name] = index
-
-    return vector_index_dict
-
-vector_index_dict = index_all_tables(sql_database)
-
-class InitializeEvent(Event):
-    pass
-
-class ConciergeEvent(Event):
-    request: Optional[str] = None
-    just_completed: Optional[str] = None
-    need_help: Optional[bool] = None
-
-class OrchestratorEvent(Event):
-    request: str
-
-class OrderCreationEvent(Event):
-    request: str
-
-chat_history = []
+MODEL = 'gpt-4o-mini'
 
 class Product(BaseModel):
     ID_PRODUCTO: int = Field(..., strict=True, title="Product ID found in the database")
@@ -217,137 +42,31 @@ class OrderAndProductList(BaseModel):
     order: Order
     product_list: List[Product]
 
-def appsheet_add(rows: List[Dict] | Dict, table_name: str):
-    print(Fore.RED + "[appsheet_add] is being executed" + Style.RESET_ALL)
+class Client(BaseModel):
+    CLIENTE: str = Field(..., strict=True, title="Nombre del cliente")
+    CUIT: int = Field(..., strict=True, title="CUIT del cliente")  # Changed to int
+    TELEFONO: Optional[int] = Field(None, strict=True, title="Teléfono del cliente")  # Changed to int
+    DIRECCION: Optional[str] = Field(None, strict=True, title="Dirección del cliente")
+    LIMITE_DE_SALDO: Optional[float] = Field(None, strict=True, title="Límite de saldo del cliente")
+    LISTA_DE_PRECIOS: Optional[float] = Field(None, strict=True, title="Descuento en lista de precios")
 
-    if isinstance(rows, dict):
-        rows = [rows]
-
-    products_url = f"https://api.appsheet.com/api/v2/apps/{appsheet_app_id}/tables/{table_name}/Action"
-
-    headers = {
-        "Content-Type": "application/json",
-        "ApplicationAccessKey": appsheet_api_key
-    }
-
-    request = {
-        "Action": "Add",
-        "Properties": {"Locale": "en-US"},
-        "Rows": rows
-    }
-
-    response = requests.post(products_url, headers=headers, json=request)
-    return response
-
-def appsheet_edit(rows: List[Dict] | Dict, table_name: str):
-    print(Fore.RED + "[appsheet_edit] is being executed" + Style.RESET_ALL)
-
-    if isinstance(rows, dict):
-        rows = [rows]
-
-    products_url = f"https://api.appsheet.com/api/v2/apps/{appsheet_app_id}/tables/{table_name}/Action"
-
-    headers = {
-        "Content-Type": "application/json",
-        "ApplicationAccessKey": appsheet_api_key
-    }
-
-    request = {
-        "Action": "Edit",
-        "Properties": {"Locale": "en-US"},
-        "Rows": rows
-    }
-
-    print(request)
-
-    response = requests.post(products_url, headers=headers, json=request)
-    return response
-
-
-class OrderWorkflow(Workflow):
+class OrderWorkflow(OrderWorkflow):
 
     @step(pass_context=True)
-    async def initialize(self, ctx: Context, ev: InitializeEvent) -> ConciergeEvent:
-
-        ctx.data["user"] = {
-            "username": None,
-            #"session_token": None,
-            #"account_id": None,
-            #"account_balance": None,
-        }
-        ctx.data["success"] = None
-        ctx.data["redirecting"] = None
-        ctx.data["overall_request"] = None
-        ctx.data["order"] = {}
-        ctx.data["order"]["products"] = []
-
-        # Print the contents of ctx.data for debugging
-        print("ctx.data:", ctx.data)
-
-        ctx.data["llm"] = OpenAIIndex(model="gpt-4o-mini",temperature=0)
-        return ConciergeEvent()
-  
-    @step(pass_context=True)
-    async def concierge(self, ctx: Context, ev: ConciergeEvent | StartEvent) -> InitializeEvent | StopEvent | OrchestratorEvent:
-        
-        response = None
-        
-        # initialize user if not already done
-        if ("user" not in ctx.data):
-            return InitializeEvent()
-        
-        # initialize concierge if not already done
-        if ("concierge" not in ctx.data):
-            system_prompt = Prompts.concierge
-            agent_worker = FunctionCallingAgentWorker.from_tools(
-                tools=[],
-                llm=ctx.data["llm"],
-                allow_parallel_tool_calls=False,
-                system_prompt=system_prompt
-            )
-            ctx.data["concierge"] = agent_worker.as_agent()  
-
-
-        concierge = ctx.data["concierge"]
-        if ctx.data["overall_request"] is not None:
-            print("There's an overall request in progress, it's ", ctx.data["overall_request"])
-            last_request = ctx.data["overall_request"]
-            ctx.data["overall_request"] = None
-            return OrchestratorEvent(request=last_request)
-        elif (ev.just_completed is not None):
-            response = concierge.chat(f"FYI, the user has just completed the task: {ev.just_completed}")
-            chat_history.append(ChatMessage(role=MessageRole.ASSISTANT, content=str(response)))
-        elif (ev.need_help):
-            print("The previous process needs help with ", ev.request)
-            return OrchestratorEvent(request=ev.request)
-        elif (ev.request is not None):
-            response = concierge.chat(ev.request)
-            chat_history.append(ChatMessage(role=MessageRole.ASSISTANT, content=str(response)))
-        
-        if response is not None: 
-            print(Fore.MAGENTA + "concierge!!!!" + Style.RESET_ALL)
-            print(Fore.MAGENTA + str(response) + Style.RESET_ALL)
-  
-            # send message to user using whatsapp api
-            await send_message_to_user(message=str(response), to='5491131500591')
-
-        #user_msg_str = input("> ").strip()
-        user_msg_str = await user_input.get()
-        if user_msg_str == "":
-            print("User has stopped the system with ''")
-            return StopEvent()
-        chat_history.append(ChatMessage(role=MessageRole.USER, content=user_msg_str))
-        return OrchestratorEvent(request=user_msg_str)
-    
-    @step(pass_context=True)
-    async def orchestrator(self, ctx: Context, ev: OrchestratorEvent) -> ConciergeEvent | OrderCreationEvent | StopEvent:
+    async def orchestrator(self, ctx: Context, ev: Events.OrchestratorEvent) -> OrchestratorEvents:
 
         #print(f"Orchestrator received request: {ev.request}")
 
         def emit_order_creation() -> bool:
             """Call this if the user wants create a new order in the system."""      
             print("__emitted: order creation")      
-            ctx.session.send_event(OrderCreationEvent(request=ev.request))
+            ctx.session.send_event(Events.OrderCreationEvent(request=ev.request))
+            return True
+
+        def emit_client_creation() -> bool:
+            """Call this if the user wants to create a new client in the system."""
+            print("__emitted: client creation")
+            ctx.session.send_event(Events.ClientCreationEvent(request=ev.request))
             return True
 
         def emit_concierge() -> bool:
@@ -355,7 +74,7 @@ class OrderWorkflow(Workflow):
             print("__emitted: concierge (non stop)")
             #ctx.session.send_event(ConciergeEvent(request=("This is the request, the orchestator didn't know how to continue: "+ev.request)))
             #ctx.session.send_event(StopEvent())
-            self.send_event(ConciergeEvent(request=ev.request))
+            ctx.session.send_event(Events.ConciergeEvent(request=ev.request))
             return True
 
         def emit_stop() -> bool:
@@ -366,7 +85,9 @@ class OrderWorkflow(Workflow):
         
         # define tool for getting customer data
         def getCustomerData(customer_name: str) -> str:
-            """Returns the customer metadata from the customer name given by the user to send that value to the system later"""
+            """USE ONLY WHEN THE SPECIFIC REQUEST IS A QUESTION ABOUT AN SPECIFIC CUSTOMER
+            ELSE USE THE OTHER TOOLS
+            Returns the customer metadata from the customer name given by the user to send that value to the system later"""
             print("__emitted: getCustomerData")
             test_retriever = vector_index_dict["CLIENTES"].as_retriever(similarity_top_k=1)
             nodes =  test_retriever.retrieve(customer_name)
@@ -379,16 +100,14 @@ class OrderWorkflow(Workflow):
 
         tools = [
             FunctionTool.from_defaults(fn=emit_order_creation),
+            FunctionTool.from_defaults(fn=emit_client_creation),  # Added to tools
             FunctionTool.from_defaults(fn=emit_concierge),
             FunctionTool.from_defaults(fn=emit_stop),
             FunctionTool.from_defaults(fn=getCustomerData)
         ]
         
-        system_prompt = Prompts.orchestrator
+        system_prompt = CustomPrompts.orchestrator
 
-        """when you call the concierge, also send information to help the concierge answer the user request, as you have more information than him 
-                         (your reply will directly sent to the concierge, the user won't read it)."""
-        
         agent_worker = FunctionCallingAgentWorker.from_tools(
             tools=tools,
             llm=ctx.data["llm"],
@@ -401,7 +120,7 @@ class OrderWorkflow(Workflow):
         orchestrator = ctx.data["orchestrator"]
         response = str(orchestrator.chat(ev.request))
         print(Fore.MAGENTA + "Orchestrator: " +response + Style.RESET_ALL)
-        #chat_history.append(ChatMessage(role=MessageRole.ASSISTANT, content=("Información del orquestador: "+str(response))))
+        #ctx.data["chat_history"].append(ChatMessage(role=MessageRole.ASSISTANT, content=("Información del orquestador: "+str(response))))
 
         if "FAILED" in response:
             print(Fore.RED + response + Style.RESET_ALL)
@@ -409,7 +128,7 @@ class OrderWorkflow(Workflow):
             #return OrchestratorEvent(request=ev.request)       
         
     @step(pass_context=True)
-    async def order_creator(self, ctx: Context, ev: OrderCreationEvent) -> ConciergeEvent | StopEvent:
+    async def order_creator(self, ctx: Context, ev: Events.OrderCreationEvent) -> Events.ConciergeEvent | StopEvent:
 
         if("order_creator_agent" not in ctx.data):
 
@@ -417,7 +136,7 @@ class OrderWorkflow(Workflow):
                 """Useful for sending the order to the system via API request, Order will be stored in the session context. 
                 Make sure to call the other tools to get the IDs before, and that you have all the data needed."""
 
-                prompt = Prompts.send_order
+                prompt = CustomPrompts.send_order
                 
                 response = client.beta.chat.completions.parse(
                     model=MODEL,
@@ -618,92 +337,96 @@ class OrderWorkflow(Workflow):
             ctx.data["create_order_agent"] = ConciergeAgent(
                 name="Create Order Agent",
                 parent=self,
-                tools=[send_order, stop, addProductToOrder, createOrder, getCustomerCUIT, emit_concierge],
+                tools=[send_order, stop, addProductToOrder, createOrder, getCustomerCUIT],
                 context=ctx,
                 system_prompt=system_prompt,
-                trigger_event=OrderCreationEvent
+                trigger_event=Events.OrderCreationEvent
             )
 
         return await ctx.data["create_order_agent"].handle_event(ev)
+    
+    @step(pass_context=True)
+    async def client_creator(self, ctx: Context, ev: Events.ClientCreationEvent) -> Events.ConciergeEvent | StopEvent:
+        if "client_creator_agent" not in ctx.data:
 
-class ConciergeAgent():
-    name: str
-    parent: Workflow
-    tools: List[FunctionTool]
-    system_prompt: str
-    context: Context
-    current_event: Event
-    trigger_event: Event
-    chat_history: List[ChatMessage]
+            async def sendCustomer():
+                """Formats ctx.data['client'] using an LLM and the Client class, then sends the parsed data via appsheet_add."""
 
-    def __init__(
-            self,
-            parent: Workflow,
-            tools: List[Callable],
-            system_prompt: str,
-            trigger_event: Event,
-            context: Context,
-            name: str,
-        ):
-        self.name = name
-        self.parent = parent
-        self.context = context
-        self.system_prompt = system_prompt
-        self.context.data["redirecting"] = False
-        self.trigger_event = trigger_event
-        self.chat_history = []
+                print("Sending client data")
 
-        # Set up the tools including the ones everybody gets
-        def done() -> None:
-            """When you complete your task, call this tool."""
-            print(f"{self.name} is complete")
-            self.context.data["redirecting"] = True
-            self.context.session.send_event(ConciergeEvent(just_completed=self.name))
+                prompt = """
+                You will be provided with data about a client, and your goal is to parse the data following the schema provided.
+                Here is a description of the parameters:
+                - client: specifies client name, CUIT, phone number, address, credit limit, and price list discount.
+                Tell the user the client ID when it's successfully created.
+                If the user asks for something you can't help with, just use the tool "help" to signal the concierge agent should help.
+                """
 
-        def need_help() -> None:
-            """If you need assistance, call this tool."""
-            print(f"{self.name} needs help")
-            self.context.data["redirecting"] = True
-            self.context.session.send_event(
-                ConciergeEvent(request=self.current_event.request, need_help=True)
+                response = client.beta.chat.completions.parse(
+                    model=MODEL,
+                    temperature=0,
+                    messages=[
+                        {"role": "system", "content": prompt},
+                        {"role": "user", "content": str(ctx.data["client"])}
+                    ],
+                    response_format=Client
+                )
+                client_data = json.loads(response.choices[0].message.content)
+                print("Parsed client data:", client_data)
+
+                response = appsheet_add([client_data], "CLIENTES")
+                if isinstance(response, requests.Response) and response.status_code == 200:
+                    print("Client added successfully:", response.json().get('Rows'))
+                    return "Cliente creado exitosamente."
+                else:
+                    print("Error inserting client:", response.text)
+                    return "Error al crear el cliente, por favor intente nuevamente."
+
+            def createClient(nombre: str, cuit: str, telefono: Optional[str] = None, direccion: Optional[str] = None,
+                             limite_de_saldo: Optional[float] = None, descuento_en_lista_de_precios: Optional[float] = None):
+                """Creates a client in the session context with provided data."""
+                client = {
+                    "NOMBRE": nombre,
+                    "CUIT": cuit,
+                }
+                if telefono:
+                    client["TELEFONO"] = telefono
+                if direccion:
+                    client["DIRECCION"] = direccion
+                if limite_de_saldo is not None:
+                    client["LIMITE_DE_SALDO"] = limite_de_saldo
+                if descuento_en_lista_de_precios is not None:
+                    client["DESCUENTO_EN_LISTA_DE_PRECIOS"] = descuento_en_lista_de_precios
+                ctx.data["client"] = client
+                print("Client created:", client)
+                return "Cliente creado en el contexto, listo para enviar."
+
+            def stop(stop_reason: str):
+                """Stops the client creator agent."""
+                print("Client creator agent is stopping, reason:", stop_reason)
+                ctx.session.send_event(StopEvent())
+
+            system_prompt = ("""
+                Usa el idioma español (Argentina).
+                Eres un asistente que ayuda a crear un cliente en el sistema recopilando la información necesaria.
+                Necesitas solicitar al usuario los siguientes datos obligatorios: 'Nombre' y 'CUIT'.
+                Los datos opcionales son: 'Teléfono', 'Dirección', 'Límite de saldo', 'Descuento en lista de precios'.
+                Una vez que tengas la información, utiliza las funciones 'createClient' para almacenarla en el contexto y 'sendCustomer' para enviar al sistema.
+                Si notas que falta información, solicita al usuario los datos necesarios.
+                Si algo no funciona correctamente, utiliza la función 'stop' para detenerte.
+                
+                """)
+
+            ctx.data["client_creator_agent"] = ConciergeAgent(
+                name="Client Creator Agent",
+                parent=self,
+                tools=[sendCustomer, stop, createClient],
+                context=ctx,
+                system_prompt=system_prompt,
+                trigger_event=Events.ClientCreationEvent
             )
 
-        self.tools = [
-            FunctionTool.from_defaults(fn=done),
-            FunctionTool.from_defaults(fn=need_help)
-        ]
-        for t in tools:
-            self.tools.append(FunctionTool.from_defaults(fn=t))
-
-        agent_worker = FunctionCallingAgentWorker.from_tools(
-            self.tools,
-            llm=self.context.data["llm"],
-            allow_parallel_tool_calls=False,
-            system_prompt=self.system_prompt
-        )
-        self.agent = agent_worker.as_agent()        
-
-    async def handle_event(self, ev: Event):
-        self.current_event = ev
-
-        response = str(self.agent.chat(ev.request, chat_history=chat_history))
-        chat_history.append(ChatMessage(role=MessageRole.ASSISTANT, content=str(response)))
-        print(Fore.MAGENTA+"AGENT: " +str(response) + Style.RESET_ALL)
-
-        # send message to user using whatsapp api
-        await send_message_to_user(message=str(response), to='5491131500591')
-
-        # if they're sending us elsewhere we're done here
-        if self.context.data["redirecting"]:
-            self.context.data["redirecting"] = False
-            return None
-
-        # otherwise, get some user input and then loop
-        #user_msg_str = input("> ").strip()
-        user_msg_str = await user_input.get()
-        return self.trigger_event(request=user_msg_str)
-
-#draw_all_possible_flows(ConciergeWorkflow,filename="concierge_flows.html")
+        return await ctx.data["client_creator_agent"].handle_event(ev)
 
 async def main():
     c = OrderWorkflow(timeout=1200, verbose=True)
@@ -713,3 +436,6 @@ async def main():
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
+
+
+

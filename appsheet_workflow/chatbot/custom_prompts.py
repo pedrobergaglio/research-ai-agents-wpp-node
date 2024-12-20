@@ -1,5 +1,5 @@
 
-class Prompts:
+class CustomPrompts:
 
     concierge = """
                 Usa el idioma español (argentina).             
@@ -23,7 +23,7 @@ class Prompts:
             in your response, only select the tool, don't add any text into it.      
             If there's no clear use for one of the tools, call the tool "concierge" to signal that the concierge agent should help, 
             UNLESS THERE'S AN ERROR, YOU ALWAYS HAVE TO CALL ONE OF THE TOOLS, if you don't call any tool, the system will break.
-            If you NOTICE SOMETHING IS NOT WORKING or did not call any tools, return the string "FAILED" followed by the exact reason you are selecting this option.
+            ONLY  if YOU did not call any tools, return the string "FAILED" followed by the exact reason you are selecting this option.
         """
     
     send_order = """

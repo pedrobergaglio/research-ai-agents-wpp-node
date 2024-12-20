@@ -4,10 +4,35 @@ import { MetaProvider as Provider } from '@builderbot/provider-meta'
 
 const chatHistory: string[] = [];
 
-export const test = addKeyword<Provider, Database>(['test']).addAction(
+export const approveFlow = addKeyword<Provider, Database>(['añlsdfkjasldfkj4"'])
+    .addAnswer('Confirm procedure?', {
+        capture: true, 
+        buttons: [
+            {body: 'Approve'},
+        ]
+    })
+
+/* export const test = addKeyword<Provider, Database>(['test']).addAction(
     async (ctx, {flowDynamic}) => {
         // Add the incoming message to the chat history
         console.log('User:', ctx.body);
+
+        const url = "http://127.0.0.1:3008/v1/messages";
+        const data = {
+            number: ctx.from,
+            message: ctx.body
+        };
+        
+        const response = await fetch(url, {
+            method: "POST",
+            body: JSON.stringify(data),
+            headers: {
+            "Content-Type": "application/json",
+            },
+        });
+
+
+
         chatHistory.push(`user: ${ctx.body}`);
 
         const request = {
@@ -30,9 +55,9 @@ export const test = addKeyword<Provider, Database>(['test']).addAction(
 
         // Send the AI response to the user
         console.log('AI message:', aiMessage);
-        await flowDynamic(aiMessage);
+        //await flowDynamic("testFlow");
 
-        /* // Check the registration status
+        // Check the registration status
         const checkDB = await fetch("http://my.app.example/checkDB", {
             method: "POST",
             body: JSON.stringify({ phoneNumber: ctx.from }),
@@ -48,6 +73,6 @@ export const test = addKeyword<Provider, Database>(['test']).addAction(
         }
         if (status === true) {
             return gotoFlow(registeredUsersFlow);
-        } */
+        }
     }
-);
+); */

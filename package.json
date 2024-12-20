@@ -15,11 +15,13 @@
     "@builderbot/bot": "1.2.1",
     "@builderbot/database-mysql": "1.2.1",
     "@builderbot/provider-meta": "1.2.1",
+    "@langchain/langgraph-sdk": "^0.0.32",
     "csv-parser": "^3.0.0",
     "dotenv": "^16.4.5",
     "emojione": "^4.5.0",
     "mysql2": "^3.11.0",
-    "pg": "^8.12.0"
+    "pg": "^8.12.0",
+    "ts-node": "^10.9.2"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
