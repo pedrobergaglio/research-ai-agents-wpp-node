@@ -84,7 +84,9 @@ export const main = addKeyword(EVENTS.WELCOME)
                         ]
                     }]
                 }
-            } else if ((ctx.body === "Yes" || ctx.body === "No") && currentState["values"]["pending_actions"].length > 0 && !currentState["values"]["pending_actions"][0]["confirmed"]) {
+            
+            } // confirmation
+            else if ((ctx.body === "Yes" || ctx.body === "No") && currentState["values"]["pending_actions"].length > 0 && !currentState["values"]["pending_actions"][0]["confirmed"]) {
 
                 console.log('Updating action confirmation:', ctx.body);
 
@@ -110,7 +112,10 @@ export const main = addKeyword(EVENTS.WELCOME)
                 
                 currentState = await client.threads.getState(thread["thread_id"]);
 
-            } else if (currentState["next"][0] === "human_feedback_select") {
+            } // human feedback
+            else if (currentState["next"][0] === "human_feedback_select" || 
+                (ctx.body != "Yes" && ctx.body != "No" && currentState["values"]["pending_actions"].length > 0 && !currentState["values"]["pending_actions"][0]["confirmed"])
+            ) {
 
                 console.log('Selecting human feedback');
 
@@ -148,7 +153,7 @@ export const main = addKeyword(EVENTS.WELCOME)
 
             //} else if(cur){
             
-            } else {
+            } else { // new conversation
 
                 console.log('Beginning a new conversation');
 
@@ -213,7 +218,10 @@ export const main = addKeyword(EVENTS.WELCOME)
             
             if (button_to_send) {
                 await flowDynamic(button_to_send)
-            } else if (currentState["values"]["pending_actions"].length > 0 && !currentState["values"]["pending_actions"][0]["confirmed"]) {
+            } else if (currentState["values"]["pending_actions"].length > 0 
+                && currentState["values"]["pending_actions"][0]["params"] != null //filled
+                && !currentState["values"]["pending_actions"][0]["confirmed"] //not confirmed
+            ) {
 
                 console.log('Confirmation detected for action!');
 
