@@ -7,236 +7,225 @@ import { flow } from "flows";
 //import { approveFlow } from "./test.flow";
 
 const URL = "http://localhost:7777"
-let client = null
-let assistants = null
-let thread = null
-let agent = null
-let currentState = null
+
+// Store client and thread info per user
+const userSessions = new Map<string, {
+    client: Client,
+    thread: any,
+    currentState: any
+}>();
 
 export const main = addKeyword(EVENTS.WELCOME)
     .addAction(
-        async (ctx, {flowDynamic}) => { //
-
-            if (!ctx) {
-                console.error('Context (ctx) is undefined');
+        async (ctx, {flowDynamic}) => {
+            if (!ctx?.from) {
+                console.error('Invalid context or missing user ID');
                 return;
             }
-            let button_to_send = null;
-            console.log('Running main flow');
 
-            if (client === null) { // initialize
+            //let button_to_send = null;
+            console.log('Running main flow for user:', ctx.from);
 
-                console.log('Initializing conversation');
-
-                client = new Client({ apiUrl: URL });
-
-                // List all assistants
-                assistants = await client.assistants.search({
-                metadata: null,
-                offset: 0,
-                limit: 10,
-                });
+            // Get or create user session
+            let userSession = userSessions.get(ctx.from);
+            
+            if (!userSession) { // New user
+                console.log('Initializing conversation for new user:', ctx.from);
                 
-                // We auto-create an assistant for each graph you register in config.
-                agent = assistants[0];
+                const client = new Client({ apiUrl: URL });
+                /* const assistants = await client.assistants.search({
+                    metadata: null,
+                    offset: 0,
+                    limit: 10,
+                }); */
                 
-                // Start a new thread
-                thread = await client.threads.create();
+                const thread = await client.threads.create();
 
-                const inputDict = {
-                    request: ctx.body//"please pay the last bill in gmail"
+                console.log('Created new thread:', thread["thread_id"]);
+
+                userSession = {
+                    client,
+                    thread,
+                    currentState: null
                 };
-                
-                const streamResponse = client.runs.stream(
-                    thread["thread_id"],
-                    "task_manager",
-                    {
-                        input: inputDict,
-                        streamMode: "values",
-                    }
-                );
+                userSessions.set(ctx.from, userSession);
 
-                for await (const chunk of streamResponse) {
-                    //console.log(`Receiving new event of type: ${chunk.event}...`);
-                    //console.log(JSON.stringify(chunk.data, null, 4));
-                    //console.log("\n\n");
-                }
-    
-                for await (const chunk of client.runs.stream(
-                    thread["thread_id"],
-                    "task_manager",
-                    {
-                        input: null,
-                        streamMode: "values",
-                    }
-                )) {
-                    //console.log(`Receiving new event of type: ${chunk.event}...`);
-                    //console.log(JSON.stringify(chunk.data, null, 4));
-                    //console.log("\n\n");
-                }
-
-                currentState = await client.threads.getState(thread["thread_id"]);
-
-                if (currentState["next"][0] === "human_feedback_select") {
-                    button_to_send = [{body:'Confirm procedure?', 
-                        buttons: [
-                            {body: 'Approve'},
-                        ]
-                    }]
-                }
-            
-            } // confirmation
-            else if ((ctx.body === "Yes" || ctx.body === "No") && currentState["values"]["pending_actions"].length > 0 && !currentState["values"]["pending_actions"][0]["confirmed"]) {
-
-                console.log('Updating action confirmation:', ctx.body);
-
-                client.threads.updateState(thread["thread_id"], {
-                    values: {
-                        human_feedback_confirm_message: ctx.body.toLowerCase()
-                    },
-                    //asNode: "human_feedback_confirm"
-                });
-
-                for await (const chunk of client.runs.stream(
-                    thread["thread_id"],
-                    "task_manager",
-                    {
-                        input: null,
-                        streamMode: "values",
-                    }
-                )) {
-                    //console.log(`Receiving new event of type: ${chunk.event}...`);
-                    //console.log(JSON.stringify(chunk.data, null, 4));
-                    //console.log("\n\n");
-                }
-                
-                currentState = await client.threads.getState(thread["thread_id"]);
-
-            } // human feedback
-            else if (currentState["next"][0] === "human_feedback_select" || 
-                (ctx.body != "Yes" && ctx.body != "No" && currentState["values"]["pending_actions"].length > 0 && !currentState["values"]["pending_actions"][0]["confirmed"])
-            ) {
-
-                console.log('Selecting human feedback');
-
-                await client.threads.updateState(thread["thread_id"], {
-                    values: {
-                        human_feedback_select_message: ctx.body
-                    },
-                    asNode: "human_feedback_select"
-                });
-
-                
-                for await (const chunk of client.runs.stream(
-                    thread["thread_id"],
-                    "task_manager",
-                    {
-                        input: null,
-                        streamMode: "values",
-                    }
-                )) {
-                    //console.log(`Receiving new event of type: ${chunk.event}...`);
-                    //console.log(JSON.stringify(chunk.data, null, 4));
-                    //console.log("\n\n");
-                }
-                
-                currentState = await client.threads.getState(thread["thread_id"]);
-
-                if (currentState["next"][0] === "human_feedback_select") {
-                    button_to_send = [{body:'Confirm procedure?', 
-                        buttons: [
-                            {body: 'Approve'},
-                        ]
-                    }]
-                }
-
-
-            //} else if(cur){
-            
-            } else { // new conversation
-
-                console.log('Beginning a new conversation');
-
-                await client.threads.updateState(thread["thread_id"], {
-                    values: {
-                        request: ctx.body
-                    },
-                    asNode: "start"
-                });
-    
-                for await (const chunk of client.runs.stream(
-                    thread["thread_id"],
-                    "task_manager",
-                    {
-                        input: null,
-                        streamMode: "values",
-                    }
-                )) {
-                    //console.log(`Receiving new event of type: ${chunk.event}...`);
-                    //console.log(JSON.stringify(chunk.data, null, 4));
-                    //console.log("\n\n");
-                }
-
-                currentState = await client.threads.getState(thread["thread_id"]);
-
-                if (currentState["next"][0] === "human_feedback_select") {
-                    button_to_send = [{body:'Confirm procedure?', 
-                        buttons: [
-                            {body: 'Approve'},
-                        ]
-                    }]
-                }
-
-            }
-
-            // find the last human message in state[messages]
-            let lastHumanMessage = null;
-            let lastHumanMessageIndex = -1;
-            //console.log("state keys: ", Object.keys(currentState["values"]))
-            // send the AI messages to the user
-            for (let i = currentState["values"]["messages"].length - 1; i >= 0; i--) {
-                if (currentState["values"]["messages"][i]["type"] === "human") {
-                    lastHumanMessage = currentState["values"]["messages"][i]["content"];
-                    lastHumanMessageIndex = i;
-                    break;
-                }
-            }
-            console.log('Last human message:', lastHumanMessage);
-            if (lastHumanMessageIndex !== -1) {
-                for (let j = lastHumanMessageIndex + 1; j < currentState["values"]["messages"].length; j++) {
-                    if (currentState["values"]["messages"][j]["type"] === "ai") {
-                        const aiMessage = currentState["values"]["messages"][j]["content"];
-                        console.log('AI:', aiMessage);
-                        await flowDynamic(aiMessage);
-                    }
-                } 
+                // Initial message handling
+                await handleNewMessage(userSession, ctx.body);
             } else {
-                console.log('No new AI messages to send');
+                // Existing user conversation handling
+                if (isConfirmationResponse(ctx.body, userSession.currentState)) {
+                    await handleConfirmation(userSession, ctx.body);
+                } else if (needsHumanFeedback(userSession.currentState, ctx.body)) {
+                    await handleHumanFeedback(userSession, ctx.body);
+                } else {
+                    await handleNewMessage(userSession, ctx.body);
+                }
             }
 
-            console.log("Next: ", currentState["next"]);
-            
-            if (button_to_send) {
-                await flowDynamic(button_to_send)
-            } else if (currentState["values"]["pending_actions"].length > 0 
-                && currentState["values"]["pending_actions"][0]["params"] != null //filled
-                && !currentState["values"]["pending_actions"][0]["confirmed"] //not confirmed
-            ) {
+            // Process messages and send responses
+            await processAndSendResponses(userSession, ctx, flowDynamic);
 
-                console.log('Confirmation detected for action!');
-
-                //flow_to_go = "confirmFlow";
-
-                await flowDynamic([{body:'Confirm action?', 
-                    buttons: [
-                        {body: 'Yes'},
-                        {body: 'No'},
-                    ]
-                }])
-
-            }
+            const currentState = await userSession?.client?.threads?.getState(userSession?.thread?.["thread_id"]);
+            console.log('Current state next:', currentState?.next);
+            console.log('Current state interrupts:', currentState?.tasks?.[0]?.interrupts);
         }
-);
+    );
+
+// Helper functions
+async function handleNewMessage(session: any, message: string) {
+    
+    console.log('Handling new message:', message);
+    
+    for await (const chunk of session.client.runs.stream(
+        session.thread["thread_id"],
+        "task_manager",
+        {
+            input: {
+                request: message
+            },
+            streamMode: "values",
+        }
+    )) {
+        console.log(`Receiving new event of type: ${chunk.event}...`);
+        console.log(JSON.stringify(chunk.data, null, 4));
+    }
+
+    session.currentState = await runAgentAndGetState(session);
+}
+
+async function handleConfirmation(session: any, response: string) {
+    await session.client.threads.updateState(
+        session.thread["thread_id"], {
+        values: { human_feedback_action_message_message: response.toLowerCase() }
+    });
+    session.currentState = await runAgentAndGetState(session);
+}
+
+async function handleHumanFeedback(session: any, feedback: string) {
+
+    const asNode = session.currentState?.next?.[0] === "human_feedback_select" ? "human_feedback_select" : "human_feedback_action";
+
+    await session.client.threads.updateState(session.thread["thread_id"], {
+        values: { human_feedback_select_message: feedback },
+        asNode: "human_feedback_select"
+    });
+    session.currentState = await runAgentAndGetState(session);
+}
+
+async function runAgentAndGetState(session: any) {
+
+    console.log('Running agent and getting state...');
+
+    for await (const chunk of session.client.runs.stream(
+        session.thread["thread_id"],
+        "task_manager",
+        { input: null, streamMode: "values" }
+    )) {
+            console.log(`Receiving new event of type: ${chunk.event}...`);
+            console.log(JSON.stringify(chunk.data, null, 4));
+            console.log("\n\n");
+    }
+    return await session.client.threads.getState(session.thread["thread_id"]);
+}
+
+async function processAndSendResponses(session: any, ctx: any, flowDynamic: any) {
+    const messages = session.currentState?.values?.messages || [];
+    const lastHumanIndex = findLastHumanMessageIndex(messages);
+    
+    if (lastHumanIndex !== -1) {
+        await sendNewAIMessages(messages, lastHumanIndex, flowDynamic);
+    }
+
+    if (session.currentState?.next?.[0] === "human_feedback_select") {
+        await flowDynamic([{
+            body: 'Confirm procedure?',
+            buttons: [{ body: 'Approve' }]
+        }]);
+    } else if (needsConfirmationButton(session.currentState)) {
+        await flowDynamic([{
+            body: 'Confirm action?',
+            buttons: [
+                { body: 'Yes' },
+                { body: 'No' }
+            ]
+        }]);
+    }
+}
+
+// Helper utility functions
+function isConfirmationResponse(body: string, state: any): boolean {
+    return (body === "Yes" || body === "No") && // Yes or No response
+           state?.values?.pending_actions?.length > 0 && // with pending to confirm actions
+           !state.values.pending_actions[0].confirmed;
+}
+
+function needsHumanFeedback(state: any, body: string): boolean {
+    return state?.next?.[0] === "human_feedback_select" || // Human feedback needed to select
+            (state?.next?.[0] === "human_feedback_action" && // Human feedback needed to confirm
+            body !== "Yes" && body !== "No" && // Not a 
+            state?.values?.pending_actions?.length > 0 && 
+            state.values.pending_actions[0].params == null); // No params filled yet
+}
+
+// Find index of last human message in conversation
+function findLastHumanMessageIndex(messages: any[]): number {
+    //console.log('Searching for last human message in:', messages);
+    for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].type === 'human') {
+            console.log('Found last human message at index:', i);
+            return i;
+        }
+    }
+    console.log('No human messages found');
+    return -1;
+}
+
+// Send all AI messages that came after the last human message
+async function sendNewAIMessages(messages: any[], lastHumanIndex: number, flowDynamic: any) {
+    console.log('Sending AI messages after index:', lastHumanIndex);
+    for (let i = lastHumanIndex + 1; i < messages.length; i++) {
+        const message = messages[i];
+        if (message.type === 'ai') {
+            console.log('Sending AI message:', message.content);
+            await flowDynamic(message.content);
+        }
+    }
+}
+
+/* async function handleApproval(session: any) {
+    await session.client.threads.updateState(
+        session.thread["thread_id"], 
+        {
+            values: { human_feedback_select_message: "approve" },
+            asNode: "human_feedback_select"
+        }
+    );
+    session.currentState = await runAgentAndGetState(session);
+} */
+
+/* // Send confirmation buttons to user
+async function sendConfirmationButtons(flowDynamic: any) {
+    console.log('Sending confirmation buttons');
+    await flowDynamic([
+        {
+            body: 'Would you like to proceed?',
+            buttons: [
+                { body: 'Yes' },
+                { body: 'No' }
+            ]
+        }
+    ]);
+} */
+
+function needsConfirmationButton(state: any): boolean {
+    return state?.values?.pending_actions?.some((action: any) => 
+        //action.params != null && 
+        !action.confirmed
+    ) ?? false;
+}
+
+
 
 
 export const register = addKeyword<Provider, Database>(utils.setEvent('REGISTER_FLOW'))
