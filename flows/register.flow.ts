@@ -6,7 +6,7 @@ import { join } from 'path'
 import { flow } from "flows";
 //import { approveFlow } from "./test.flow";
 
-const URL = "http://localhost:7777"
+const URL = "http://localhost:8123"
 
 // Store client and thread info per user
 const userSessions = new Map<string, {
@@ -16,74 +16,56 @@ const userSessions = new Map<string, {
 }>();
 
 export const main = addKeyword(EVENTS.WELCOME)
-    .addAction(
-        async (ctx, {flowDynamic}) => {
-            if (!ctx?.from) {
-                console.error('Invalid context or missing user ID');
-                return;
-            }
+    .addAction(async (ctx, {flowDynamic}) => {
 
-            //let button_to_send = null;
-            console.log('Running main flow for user:', ctx.from);
-
-            // Get or create user session
-            let userSession = userSessions.get(ctx.from);
-            
-            if (!userSession) { // New user
-                console.log('Initializing conversation for new user:', ctx.from);
-                
-                const client = new Client({ apiUrl: URL });
-                /* const assistants = await client.assistants.search({
-                    metadata: null,
-                    offset: 0,
-                    limit: 10,
-                }); */
-                
-                const thread = await client.threads.create();
-
-                console.log('Created new thread:', thread["thread_id"]);
-
-                userSession = {
-                    client,
-                    thread,
-                    currentState: null
-                };
-                userSessions.set(ctx.from, userSession);
-
-                // Initial message handling
-                await handleNewMessage(userSession, ctx.body);
-            } else {
-                // Existing user conversation handling
-                if (isConfirmationResponse(ctx.body, userSession.currentState)) {
-                    await handleConfirmation(userSession, ctx.body);
-                } else if (needsHumanFeedback(userSession.currentState, ctx.body)) {
-                    await handleHumanFeedback(userSession, ctx.body);
-                } else {
-                    await handleNewMessage(userSession, ctx.body);
-                }
-            }
-
-            // Process messages and send responses
-            await processAndSendResponses(userSession, ctx, flowDynamic);
-
-            const currentState = await userSession?.client?.threads?.getState(userSession?.thread?.["thread_id"]);
-            console.log('Current state next:', currentState?.next);
-            console.log('Current state interrupts:', currentState?.tasks?.[0]?.interrupts);
+        if (ctx.body === 'restart') {
+            userSessions.clear();
+            await flowDynamic('RESTARTED');
+            return;
         }
-    );
 
-// Helper functions
-async function handleNewMessage(session: any, message: string) {
-    
+        if (!ctx?.from) {
+            console.error('Invalid context or missing user ID');
+            return;
+        }
+
+        console.log('Running main flow for user:', ctx.from);
+        let userSession = userSessions.get(ctx.from);
+        
+        if (!userSession) {
+            console.log('Initializing conversation for new user:', ctx.from);
+            const client = new Client({ apiUrl: URL });
+            const thread = await client.threads.create();
+            userSession = {
+                client,
+                thread,
+                currentState: null
+            };
+            userSessions.set(ctx.from, userSession);
+            // Fix: Pass ctx instead of ctx.body
+            await handleNewMessage(userSession, ctx);
+        } else {
+            if (isConfirmationResponse(ctx.body, userSession.currentState)) {
+                await handleConfirmation(userSession, ctx);
+            } else if (needsHumanFeedback(userSession.currentState, ctx.body)) {
+                await handleHumanFeedback(userSession, ctx);
+            } else {
+                await handleNewMessage(userSession, ctx);
+            }
+        }
+
+        await processAndSendResponses(userSession, ctx, flowDynamic);
+    });
+
+async function handleNewMessage(userSession: any, ctx: any) {
+    const message = ctx.body;
     console.log('Handling new message:', message);
     
-    for await (const chunk of session.client.runs.stream(
-        session.thread["thread_id"],
+    for await (const chunk of userSession.client.runs.stream(
+        userSession.thread["thread_id"],
         "task_manager",
         {
-            input: {
-                request: message
-            },
+            input: { request: message },
             streamMode: "values",
         }
     )) {
@@ -91,34 +73,45 @@ async function handleNewMessage(session: any, message: string) {
         console.log(JSON.stringify(chunk.data, null, 4));
     }
 
-    session.currentState = await runAgentAndGetState(session);
+    userSession.currentState = await runAgentAndGetState(userSession);
+    userSessions.set(ctx.from, userSession);
 }
 
-async function handleConfirmation(session: any, response: string) {
-    await session.client.threads.updateState(
-        session.thread["thread_id"], {
-        values: { human_feedback_action_message_message: response.toLowerCase() }
+async function handleConfirmation(userSession: any, ctx: any) {
+
+    let response = ctx.body;
+
+    response = response === 'Si' ? 'Yes' : response;
+
+    await userSession.client.threads.updateState(
+        userSession.thread["thread_id"], {
+        values: { human_feedback_action_message: response.toLowerCase() }
     });
-    session.currentState = await runAgentAndGetState(session);
+    userSession.currentState = await runAgentAndGetState(userSession);
+    userSessions.set(ctx.from, userSession);
 }
 
-async function handleHumanFeedback(session: any, feedback: string) {
+async function handleHumanFeedback(userSession: any, ctx: any) {
 
-    const asNode = session.currentState?.next?.[0] === "human_feedback_select" ? "human_feedback_select" : "human_feedback_action";
+    const feedback = ctx.body;
+    const asNode = userSession.currentState?.next?.[0] === "human_feedback_select" ? "human_feedback_select" : "human_feedback_action";
 
-    await session.client.threads.updateState(session.thread["thread_id"], {
+    console.log('Handling human feedback asNode:', asNode, 'because userSession.currentState?.next?.[0] is ', userSession.currentState?.next?.[0]);
+
+    await userSession.client.threads.updateState(userSession.thread["thread_id"], {
         values: { human_feedback_select_message: feedback },
-        asNode: "human_feedback_select"
+        asNode: asNode
     });
-    session.currentState = await runAgentAndGetState(session);
+    userSession.currentState = await runAgentAndGetState(userSession);
+    userSessions.set(ctx.from, userSession);
 }
 
-async function runAgentAndGetState(session: any) {
+async function runAgentAndGetState(userSession: any) {
 
     console.log('Running agent and getting state...');
 
-    for await (const chunk of session.client.runs.stream(
-        session.thread["thread_id"],
+    for await (const chunk of userSession.client.runs.stream(
+        userSession.thread["thread_id"],
         "task_manager",
         { input: null, streamMode: "values" }
     )) {
@@ -126,27 +119,27 @@ async function runAgentAndGetState(session: any) {
             console.log(JSON.stringify(chunk.data, null, 4));
             console.log("\n\n");
     }
-    return await session.client.threads.getState(session.thread["thread_id"]);
+    return await userSession.client.threads.getState(userSession.thread["thread_id"]);
 }
 
-async function processAndSendResponses(session: any, ctx: any, flowDynamic: any) {
-    const messages = session.currentState?.values?.messages || [];
+async function processAndSendResponses(userSession: any, ctx: any, flowDynamic: any) {
+    const messages = userSession.currentState?.values?.messages || [];
     const lastHumanIndex = findLastHumanMessageIndex(messages);
     
     if (lastHumanIndex !== -1) {
         await sendNewAIMessages(messages, lastHumanIndex, flowDynamic);
     }
 
-    if (session.currentState?.next?.[0] === "human_feedback_select") {
+    if (userSession.currentState?.next?.[0] === "human_feedback_select") {
         await flowDynamic([{
             body: 'Confirm procedure?',
             buttons: [{ body: 'Approve' }]
         }]);
-    } else if (needsConfirmationButton(session.currentState)) {
+    } else if (needsConfirmationButton(userSession.currentState)) {
         await flowDynamic([{
-            body: 'Confirm action?',
+            body: 'Respuesta',
             buttons: [
-                { body: 'Yes' },
+                { body: 'Si' },
                 { body: 'No' }
             ]
         }]);
@@ -155,7 +148,7 @@ async function processAndSendResponses(session: any, ctx: any, flowDynamic: any)
 
 // Helper utility functions
 function isConfirmationResponse(body: string, state: any): boolean {
-    return (body === "Yes" || body === "No") && // Yes or No response
+    return (body === "Si" || body === "No") && // Yes or No response
            state?.values?.pending_actions?.length > 0 && // with pending to confirm actions
            !state.values.pending_actions[0].confirmed;
 }
@@ -163,7 +156,7 @@ function isConfirmationResponse(body: string, state: any): boolean {
 function needsHumanFeedback(state: any, body: string): boolean {
     return state?.next?.[0] === "human_feedback_select" || // Human feedback needed to select
             (state?.next?.[0] === "human_feedback_action" && // Human feedback needed to confirm
-            body !== "Yes" && body !== "No" && // Not a 
+            body !== "Si" && body !== "No" && // Not a 
             state?.values?.pending_actions?.length > 0 && 
             state.values.pending_actions[0].params == null); // No params filled yet
 }
@@ -186,42 +179,19 @@ async function sendNewAIMessages(messages: any[], lastHumanIndex: number, flowDy
     console.log('Sending AI messages after index:', lastHumanIndex);
     for (let i = lastHumanIndex + 1; i < messages.length; i++) {
         const message = messages[i];
-        if (message.type === 'ai') {
+        if (message.type === 'ai' && message.name !== 'log') {
             console.log('Sending AI message:', message.content);
             await flowDynamic(message.content);
         }
     }
 }
 
-/* async function handleApproval(session: any) {
-    await session.client.threads.updateState(
-        session.thread["thread_id"], 
-        {
-            values: { human_feedback_select_message: "approve" },
-            asNode: "human_feedback_select"
-        }
-    );
-    session.currentState = await runAgentAndGetState(session);
-} */
-
-/* // Send confirmation buttons to user
-async function sendConfirmationButtons(flowDynamic: any) {
-    console.log('Sending confirmation buttons');
-    await flowDynamic([
-        {
-            body: 'Would you like to proceed?',
-            buttons: [
-                { body: 'Yes' },
-                { body: 'No' }
-            ]
-        }
-    ]);
-} */
-
 function needsConfirmationButton(state: any): boolean {
     return state?.values?.pending_actions?.some((action: any) => 
         //action.params != null && 
         !action.confirmed
+        && state.next[0] === "human_feedback_action"
+        && (state.values.pending_actions[0].params != null || state.values.pending_actions[0].params_schema == null)
     ) ?? false;
 }
 
