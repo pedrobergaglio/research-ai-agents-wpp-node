@@ -2,9 +2,19 @@ import { Client } from "@langchain/langgraph-sdk";
 import { createBot, createProvider, createFlow, addKeyword, utils, EVENTS } from '@builderbot/bot'
 import { MysqlAdapter as Database } from '@builderbot/database-mysql'
 import { MetaProvider as Provider } from '@builderbot/provider-meta'
-import { join } from 'path'
 import { flow } from "flows";
-//import { approveFlow } from "./test.flow";
+import dotenv from 'dotenv';
+import * as fs from 'fs';
+import fetch from 'cross-fetch';
+import { join } from 'path';
+import path from 'path';
+import { writeFile, mkdir } from 'fs/promises';
+import { text } from "stream/consumers";
+import { AssemblyAI } from 'assemblyai';
+import OpenAI from 'openai';
+
+
+dotenv.config();
 
 const URL = "http://localhost:8123"
 
@@ -15,8 +25,31 @@ const userSessions = new Map<string, {
     currentState: any
 }>();
 
-export const main = addKeyword(EVENTS.WELCOME)
+export const main = addKeyword([EVENTS.WELCOME, EVENTS.MEDIA, EVENTS.VOICE_NOTE, EVENTS.DOCUMENT, EVENTS.LOCATION])
     .addAction(async (ctx, {flowDynamic}) => {
+
+        console.log('Welcome event triggered');
+        console.log(ctx);
+
+        if (ctx.type != 'audio' && ctx.type != 'text' && ctx.type != 'interactive') {return}
+
+        if (ctx.type == 'audio' || ctx.type == 'image' || ctx.type == 'document') {
+            try {
+                const transcription = await downloadMedia(ctx, flowDynamic);
+                //console.log(`Media saved to: ${filePath}`);
+                ctx.body = transcription;
+                
+                // Continue with existing flow...
+                //await flowDyn amic('Media received and saved!');
+
+
+            } catch (error) {
+                console.error('Media download failed:', {
+                    error: error.message,
+                    url: ctx.url
+                });
+            }
+        }
 
         if (ctx.body === 'restart') {
             userSessions.clear();
@@ -57,6 +90,127 @@ export const main = addKeyword(EVENTS.WELCOME)
         await processAndSendResponses(userSession, ctx, flowDynamic);
     });
 
+    const downloadMedia = async (ctx: any, flowDynamic: any) => {
+        const bearer = process.env.JWT_TOKEN?.trim();
+        const url = ctx.url;
+        
+        const response = await fetch(url, {
+            headers: {
+                'Authorization': `Bearer ${bearer}`,
+                'User-Agent': 'node'
+            }
+        });
+    
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+    
+        const buffer = Buffer.from(await response.arrayBuffer());
+        
+        // Create media subfolders
+        const mediaDir = join(process.cwd(), 'media');
+        const mediaTypeDir = join(mediaDir, getMediaFolder(ctx.type));
+        await mkdir(mediaTypeDir, { recursive: true });
+        
+        // Save with proper extension
+        const extension = getFileExtension(ctx.type, url);
+        const fileName = `${Date.now()}${extension}`;
+        const filePath = join(mediaTypeDir, fileName);
+        
+        await writeFile(filePath, buffer);
+    
+        // If audio, transcribe it
+        if (ctx.type === 'audio') {
+            await flowDynamic('Escuchando...'); // Progress message
+            
+            try {
+                console.log('Starting transcription for:', filePath);
+                const transcription = await textFromAudio(filePath);
+                
+                if (transcription) {
+                    console.log('Transcription received:', transcription);
+                    //await flowDynamic(transcription); // Send as array of messages
+                    return transcription;
+                } else {
+                    await flowDynamic('Parece que no se pudo transcribir el audio 😢');
+                    console.error('Empty transcription received');
+                }
+            } catch (error) {
+                console.error('Transcription error:', error);
+                await flowDynamic('Parece que hubo un error transcribiendo el audio 😢');
+            }
+        }
+    
+        return filePath;
+    };
+    
+    const textFromAudio = async (audioPath: string): Promise<string> => {
+        /* const client = new AssemblyAI({
+            apiKey: process.env.ASSEMBLY_AI_KEY
+        });
+    
+        const startTime = Date.now();
+        console.log('Starting transcription at:', startTime);
+    
+        const params = {
+            audio: audioPath,
+            language_code: 'es'
+        };
+    
+        const transcript = await client.transcripts.transcribe(params);
+        console.log('Transcription completed in:', Date.now() - startTime, 'ms');
+        
+        if (transcript.status === 'error') {
+            throw new Error(`Transcription failed: ${transcript.error}`);
+        }
+    
+        return transcript.text || ''; */
+
+        // OpenAI Whisper implementation
+    try {
+        const startTime = Date.now();
+        console.log('Starting Whisper transcription at:', startTime);
+
+        const openai = new OpenAI({
+            apiKey: process.env.OPENAI_API_KEY
+        });
+
+        const transcription = await openai.audio.transcriptions.create({
+            file: fs.createReadStream(audioPath),
+            model: "whisper-1",
+            language: "es"  // Spanish
+        });
+
+        console.log('Transcription completed in:', Date.now() - startTime, 'ms');
+        return transcription.text;
+    } catch (error) {
+        console.error('Whisper transcription error:', error);
+        throw error;
+    }
+    };
+
+const getMediaFolder = (type: string): string => {
+    switch (type) {
+        case 'audio': return 'audio';
+        case 'image': return 'images';
+        case 'document': return 'documents';
+        default: return 'other';
+    }
+    };
+    
+const getFileExtension = (type: string, url: string): string => {
+switch (type) {
+    case 'audio': return '.ogg';
+    case 'image': return '.jpg';
+    case 'document': {
+    const originalExt = path.extname(url);
+    return originalExt || '.txt'; // fallback to .txt
+    }
+    default: return '';
+}
+};
+
+
 async function handleNewMessage(userSession: any, ctx: any) {
     const message = ctx.body;
     console.log('Handling new message:', message);
@@ -66,7 +220,7 @@ async function handleNewMessage(userSession: any, ctx: any) {
         "task_manager",
         {
             input: { request: message },
-            streamMode: "values",
+            streamMode: "updates",
         }
     )) {
         console.log(`Receiving new event of type: ${chunk.event}...`);
@@ -113,7 +267,7 @@ async function runAgentAndGetState(userSession: any) {
     for await (const chunk of userSession.client.runs.stream(
         userSession.thread["thread_id"],
         "task_manager",
-        { input: null, streamMode: "values" }
+        { input: null, streamMode: "updates" }
     )) {
             console.log(`Receiving new event of type: ${chunk.event}...`);
             console.log(JSON.stringify(chunk.data, null, 4));

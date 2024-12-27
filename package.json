@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node ./dist/app.js --env-file=.env",
     "lint": "eslint . ",
-    "dev": "npm run lint && nodemon --env-file=.env ./src/app.ts",
+    "dev": "npm run lint && nodemon ./src/app.ts",
     "build": "npx rollup -c --env-file=.env"
   },
   "keywords": [],
@@ -16,10 +16,14 @@
     "@builderbot/database-mysql": "1.2.1",
     "@builderbot/provider-meta": "1.2.1",
     "@langchain/langgraph-sdk": "^0.0.32",
+    "assemblyai": "^4.8.0",
+    "cross-fetch": "^4.1.0",
     "csv-parser": "^3.0.0",
+    "date-fns": "^4.1.0",
     "dotenv": "^16.4.5",
     "emojione": "^4.5.0",
     "mysql2": "^3.11.0",
+    "openai": "^4.77.0",
     "pg": "^8.12.0",
     "ts-node": "^10.9.2"
   },
