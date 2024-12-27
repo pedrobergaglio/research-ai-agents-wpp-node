@@ -13,7 +13,6 @@ import { text } from "stream/consumers";
 import { AssemblyAI } from 'assemblyai';
 import OpenAI from 'openai';
 
-
 dotenv.config();
 
 const URL = "http://localhost:8123"
@@ -25,11 +24,17 @@ const userSessions = new Map<string, {
     currentState: any
 }>();
 
-export const main = addKeyword([EVENTS.WELCOME, EVENTS.MEDIA, EVENTS.VOICE_NOTE, EVENTS.DOCUMENT, EVENTS.LOCATION])
-    .addAction(async (ctx, {flowDynamic}) => {
+export const main = addKeyword<Provider, Database>([EVENTS.WELCOME, EVENTS.MEDIA, EVENTS.VOICE_NOTE, EVENTS.DOCUMENT, EVENTS.LOCATION])
+    .addAction(async (ctx, {flowDynamic, provider}) => {
 
         console.log('Welcome event triggered');
         console.log(ctx);
+
+        if (ctx.body === 'restart') {
+            userSessions.clear();
+            await flowDynamic('RESTARTED');
+            return;
+        }
 
         if (ctx.type != 'audio' && ctx.type != 'text' && ctx.type != 'interactive') {return}
 
@@ -87,7 +92,7 @@ export const main = addKeyword([EVENTS.WELCOME, EVENTS.MEDIA, EVENTS.VOICE_NOTE,
             }
         }
 
-        await processAndSendResponses(userSession, ctx, flowDynamic);
+        await processAndSendResponses(userSession, ctx, flowDynamic, Provider);
     });
 
     const downloadMedia = async (ctx: any, flowDynamic: any) => {
@@ -233,6 +238,8 @@ async function handleNewMessage(userSession: any, ctx: any) {
 
 async function handleConfirmation(userSession: any, ctx: any) {
 
+    console.log('Handling confirmation:', ctx.body);
+
     let response = ctx.body;
 
     response = response === 'Si' ? 'Yes' : response;
@@ -276,7 +283,7 @@ async function runAgentAndGetState(userSession: any) {
     return await userSession.client.threads.getState(userSession.thread["thread_id"]);
 }
 
-async function processAndSendResponses(userSession: any, ctx: any, flowDynamic: any) {
+async function processAndSendResponses(userSession: any, ctx: any, flowDynamic: any, provider: any) {
     const messages = userSession.currentState?.values?.messages || [];
     const lastHumanIndex = findLastHumanMessageIndex(messages);
     
@@ -297,6 +304,8 @@ async function processAndSendResponses(userSession: any, ctx: any, flowDynamic: 
                 { body: 'No' }
             ]
         }]);
+    } else if (userSession.currentState?.values?.options?.length > 0) {
+        await flowDynamic(userSession.currentState.values.options);
     }
 }
 
